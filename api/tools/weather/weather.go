@@ -93,6 +93,9 @@ func (t Forecast) Call(arg json.RawMessage) string {
 	if err := json.Unmarshal(arg, &args); err != nil {
 		return errorResponse(err)
 	}
+	if args.Periods == 0 {
+		args.Periods = 24
+	}
 	w, err := weatherForecast(args.Location, args.Periods, t.ApiKey)
 	if err != nil {
 		return errorResponse(err)
