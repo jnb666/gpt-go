@@ -21,7 +21,7 @@ type ToolFunction interface {
 // If tools are defined and the response ends with a tool call then invoke the Call method adds the results
 // to the request before resending.
 func CreateChatCompletionStream(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
-	callback func(openai.ChatCompletionStreamChoiceDelta), tools ...ToolFunction) (choice openai.ChatCompletionChoice, err error) {
+	callback func(openai.ChatCompletionStreamChoiceDelta) error, tools ...ToolFunction) (choice openai.ChatCompletionChoice, err error) {
 
 	for {
 		choice, err := createChatCompletionStream(ctx, client, request, callback)
@@ -59,7 +59,7 @@ func callTool(fn openai.FunctionCall, tools []ToolFunction) (string, error) {
 
 // Send streaming chat request to client and calls callback func with updates. Returns accumulated response.
 func createChatCompletionStream(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
-	callback func(openai.ChatCompletionStreamChoiceDelta)) (choice openai.ChatCompletionChoice, err error) {
+	callback func(openai.ChatCompletionStreamChoiceDelta) error) (choice openai.ChatCompletionChoice, err error) {
 
 	stream, err := client.CreateChatCompletionStream(ctx, request)
 	if err != nil {
@@ -78,7 +78,9 @@ func createChatCompletionStream(ctx context.Context, client *openai.Client, requ
 			continue
 		}
 		delta := resp.Choices[0].Delta
-		callback(delta)
+		if err = callback(delta); err != nil {
+			return choice, err
+		}
 		choice.Message.Content += delta.Content
 		choice.Message.ReasoningContent += delta.ReasoningContent
 		// assumes max of 1 tool call in message

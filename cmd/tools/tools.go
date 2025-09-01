@@ -50,12 +50,12 @@ func main() {
 }
 
 // Print output from chat completion stream to stdout
-func printOutput() func(openai.ChatCompletionStreamChoiceDelta) {
+func printOutput() func(openai.ChatCompletionStreamChoiceDelta) error {
 	channel := ""
-	return func(delta openai.ChatCompletionStreamChoiceDelta) {
+	return func(delta openai.ChatCompletionStreamChoiceDelta) error {
 		if delta.Role == "tool" {
 			fmt.Printf("\n## tool response\n%s\n", delta.Content)
-			return
+			return nil
 		}
 		if delta.ReasoningContent != "" {
 			if channel == "" {
@@ -73,7 +73,8 @@ func printOutput() func(openai.ChatCompletionStreamChoiceDelta) {
 		}
 		if len(delta.ToolCalls) > 0 && delta.ToolCalls[0].Function.Name != "" {
 			fmt.Println("\n\n## tool call")
-			return
+			return nil
 		}
+		return nil
 	}
 }

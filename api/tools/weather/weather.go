@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/sashabaranov/go-openai"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
