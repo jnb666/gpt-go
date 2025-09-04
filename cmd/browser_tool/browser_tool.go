@@ -26,7 +26,7 @@ func main() {
 	conv.Messages = append(conv.Messages, api.Message{Type: "user", Content: "who is Prime Minister of the UK?"})
 
 	req := api.NewRequest(conv, tools...)
-	fmt.Println(pretty(req))
+	//fmt.Println(pretty(req))
 
 	resp, err := api.CreateChatCompletionStream(context.Background(), client, req, printOutput(), tools...)
 	if err != nil {
