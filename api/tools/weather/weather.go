@@ -4,19 +4,22 @@ package weather
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net/http"
 	"net/url"
 	"time"
 
+	"github.com/jnb666/gpt-go/api"
+	"github.com/jnb666/gpt-go/api/tools"
 	"github.com/sashabaranov/go-openai"
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	Client = http.Client{Timeout: 30 * time.Second}
-)
+func Tools(apiKey string) []api.ToolFunction {
+	return []api.ToolFunction{
+		Current{ApiKey: apiKey},
+		Forecast{ApiKey: apiKey},
+	}
+}
 
 // Tool to get current weather - implements api.ToolFunction interface
 type Current struct {
@@ -113,7 +116,7 @@ func currentWeather(location string, apiKey string) (w currentWeatherData, err e
 	uri := fmt.Sprintf("https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&appid=%s&units=metric",
 		loc.Lat, loc.Lon, apiKey)
 	w.Loc = loc
-	err = httpGet(uri, &w)
+	err = tools.Get(uri, &w)
 	if err == nil && len(w.Weather) == 0 {
 		err = fmt.Errorf("current weather for %s not found", loc)
 	}
@@ -165,7 +168,7 @@ func weatherForecast(location string, periods int, apiKey string) (w forecastWea
 	uri := fmt.Sprintf("https://api.openweathermap.org/data/2.5/forecast?lat=%f&lon=%f&cnt=%d&appid=%s&units=metric",
 		loc.Lat, loc.Lon, periods, apiKey)
 	w.Loc = loc
-	err = httpGet(uri, &w)
+	err = tools.Get(uri, &w)
 	if err == nil && len(w.List) == 0 {
 		err = fmt.Errorf("weather forecast for %s not found", loc)
 	}
@@ -195,7 +198,7 @@ func geocoding(location, apiKey string) (loc []location, err error) {
 	}
 	uri := fmt.Sprintf("http://api.openweathermap.org/geo/1.0/direct?q=%s&&appid=%s",
 		url.QueryEscape(location), apiKey)
-	err = httpGet(uri, &loc)
+	err = tools.Get(uri, &loc)
 	if err == nil && len(loc) == 0 {
 		err = fmt.Errorf("location %q not found", location)
 	}
@@ -215,22 +218,6 @@ func (l location) String() string {
 }
 
 // Util functions
-func httpGet(uri string, v any) error {
-	resp, err := Client.Get(uri)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP error: %s", resp.Status)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(body, v)
-}
-
 func errorResponse(err error) string {
 	return fmt.Sprintf("Error: %s", err)
 }

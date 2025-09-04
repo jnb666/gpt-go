@@ -2,6 +2,7 @@ package api
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/sashabaranov/go-openai"
@@ -52,6 +53,7 @@ type Config struct {
 	ModelIdentity   string       `json:"model_identity"`
 	ReasoningEffort string       `json:"reasoning_effort"` // low | medium | high
 	Tools           []ToolConfig `json:"tools,omitzero"`
+	ToolDescription string       `json:"tools_description,omitzero`
 }
 
 type ToolConfig struct {
@@ -86,8 +88,15 @@ func NewRequest(conv Conversation, tools ...ToolFunction) (req openai.ChatComple
 	if cfg.ReasoningEffort != "" {
 		req.ChatTemplateKwargs["reasoning_effort"] = cfg.ReasoningEffort
 	}
+	var system []string
 	if cfg.SystemPrompt != "" {
-		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleDeveloper, Content: cfg.SystemPrompt})
+		system = append(system, cfg.SystemPrompt)
+	}
+	if cfg.ToolDescription != "" {
+		system = append(system, cfg.ToolDescription)
+	}
+	if len(system) > 0 {
+		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleDeveloper, Content: strings.Join(system, "\n\n")})
 	}
 	for _, tool := range tools {
 		def := tool.Definition()

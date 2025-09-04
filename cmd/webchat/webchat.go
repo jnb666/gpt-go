@@ -16,6 +16,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/jnb666/gpt-go/api"
+	"github.com/jnb666/gpt-go/api/tools/browser"
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
 	"github.com/sashabaranov/go-openai"
@@ -63,6 +64,10 @@ func websocketHandler(w http.ResponseWriter, r *http.Request) {
 	c := newConnection(conn)
 
 	cfg := api.DefaultConfig(c.tools...)
+	if c.browser != nil {
+		cfg.ToolDescription = c.browser.Description()
+	}
+
 	err = loadJSON("config.json", &cfg)
 	if err != nil {
 		log.Error(err)
@@ -102,6 +107,7 @@ type Connection struct {
 	conn     *websocket.Conn
 	client   *openai.Client
 	tools    []api.ToolFunction
+	browser  *browser.Browser
 	channel  string
 	content  string
 	analysis string
@@ -117,12 +123,15 @@ func newConnection(conn *websocket.Conn) *Connection {
 		client: openai.NewClientWithConfig(config),
 	}
 	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
-		c.tools = []api.ToolFunction{
-			weather.Current{ApiKey: apiKey},
-			weather.Forecast{ApiKey: apiKey},
-		}
+		c.tools = weather.Tools(apiKey)
 	} else {
-		log.Warn("skipping tools support - OWM_API_KEY env variable is not defined")
+		log.Warn("skipping weather tools support - OWM_API_KEY env variable is not defined")
+	}
+	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
+		c.browser = &browser.Browser{BraveApiKey: apiKey}
+		c.tools = append(c.tools, c.browser.Tools()...)
+	} else {
+		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
 	}
 	return c
 }
@@ -152,9 +161,15 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	c.content = ""
 	c.analysis = ""
 	c.sequence = 0
-	resp, err := api.CreateChatCompletionStream(context.Background(), c.client, req, c.streamMessage, c.tools...)
+	if c.browser != nil {
+		c.browser.Reset()
+	}
+	_, err := api.CreateChatCompletionStream(context.Background(), c.client, req, c.streamMessage, c.tools...)
 	if err != nil {
 		return conv, err
+	}
+	if c.browser != nil && len(c.browser.Docs) > 0 {
+		c.content = c.browser.Postprocess(c.content)
 	}
 	err = c.sendUpdate("final", "\n")
 	if err != nil {
@@ -163,7 +178,7 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	if c.analysis != "" {
 		conv.Messages = append(conv.Messages, api.Message{Type: "analysis", Content: c.analysis})
 	}
-	conv.Messages = append(conv.Messages, api.Message{Type: "final", Content: resp.Message.Content})
+	conv.Messages = append(conv.Messages, api.Message{Type: "final", Content: c.content})
 	err = saveJSON(conv.ID, conv)
 	if err == nil && len(conv.Messages) <= 3 {
 		err = c.listChats(conv.ID)
