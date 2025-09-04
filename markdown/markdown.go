@@ -53,18 +53,18 @@ func Render(doc string) (string, error) {
 
 // Parsed Markdown content
 type Document struct {
-	Title      string   `json:"title"`
-	URL        string   `json:"url"`
-	Links      []Link   `json:"links"`
-	Lines      []string `json:"lines"`
-	StartLine  int      `json:"start_line"`
-	WrapColumn int      `json:"wrap_column"`
+	Title      string
+	URL        string
+	Links      []Link
+	Lines      []string
+	StartLine  int
+	WrapColumn int
 }
 
 // Link extracted from document
 type Link struct {
-	Title string `json:"title"`
-	URL   string `json:"url"`
+	Title string
+	URL   string
 }
 
 // Format link with id, title and host if different from srcHost.

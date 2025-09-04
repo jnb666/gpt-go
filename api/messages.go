@@ -53,7 +53,7 @@ type Config struct {
 	ModelIdentity   string       `json:"model_identity"`
 	ReasoningEffort string       `json:"reasoning_effort"` // low | medium | high
 	Tools           []ToolConfig `json:"tools,omitzero"`
-	ToolDescription string       `json:"tools_description,omitzero`
+	ToolDescription string       `json:"tools_description,omitzero"`
 }
 
 type ToolConfig struct {
