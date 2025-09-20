@@ -18,9 +18,7 @@ var apiKey = os.Getenv("OWM_API_KEY")
 func main() {
 	log.SetFlags(0)
 
-	config := openai.DefaultConfig("")
-	config.BaseURL = "http://localhost:8080/v1"
-	client := openai.NewClientWithConfig(config)
+	client := api.NewClient()
 
 	currentWeather := weather.Current{ApiKey: apiKey}
 	weatherForecast := weather.Forecast{ApiKey: apiKey}
@@ -38,7 +36,7 @@ func main() {
 		}
 		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: "user", Content: question})
 
-		resp, err := api.CreateChatCompletionStream(context.Background(), client, req,
+		resp, _, err := api.CreateChatCompletionStream(context.Background(), client, req,
 			printOutput(), currentWeather, weatherForecast)
 		if err != nil {
 			log.Fatal(err)

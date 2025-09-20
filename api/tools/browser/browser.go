@@ -241,7 +241,8 @@ func (t Open) Call(arg json.RawMessage) string {
 		doc, err = t.current(args.Cursor)
 	}
 	if err != nil {
-		return errorResponse(err)
+		log.Error(err)
+		return fmt.Sprintf("%s\n(%s)\n", err, doc.URL)
 	}
 	if args.Loc >= 0 {
 		doc.StartLine = args.Loc
@@ -272,6 +273,7 @@ func (t Open) scrape(url, title string) (doc markdown.Document, err error) {
 	}
 	var reply scrapeResponse
 	log.Info("    ", url)
+	doc.URL = url
 	err = tools.Post(FirecrawlURL, request, &reply, tools.Header{Key: "Authorization", Value: "Bearer " + t.FirecrawlApiKey})
 	if err != nil {
 		return doc, err

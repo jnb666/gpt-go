@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/jnb666/gpt-go/api"
@@ -116,11 +117,9 @@ type Connection struct {
 
 // init connection with openai client and tool functions
 func newConnection(conn *websocket.Conn) *Connection {
-	config := openai.DefaultConfig("")
-	config.BaseURL = "http://localhost:8080/v1"
 	c := &Connection{
 		conn:   conn,
-		client: openai.NewClientWithConfig(config),
+		client: api.NewClient(),
 	}
 	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
 		c.tools = weather.Tools(apiKey)
@@ -154,9 +153,11 @@ func (c *Connection) listChats(currentID string) error {
 
 // add new message from user to chat, get streaming response, returns updated message list
 func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Conversation, error) {
+	start := time.Now()
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
 	req := api.NewRequest(conv, c.tools...)
+	req.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
 	c.channel = ""
 	c.content = ""
 	c.analysis = ""
@@ -164,14 +165,14 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	if c.browser != nil {
 		c.browser.Reset()
 	}
-	_, err := api.CreateChatCompletionStream(context.Background(), c.client, req, c.streamMessage, c.tools...)
+	_, usage, err := api.CreateChatCompletionStream(context.Background(), c.client, req, c.streamMessage, c.tools...)
 	if err != nil {
 		return conv, err
 	}
 	if c.browser != nil && len(c.browser.Docs) > 0 {
 		c.content = c.browser.Postprocess(c.content)
 	}
-	err = c.sendUpdate("final", "\n")
+	err = c.sendUpdate("final", "\n", true)
 	if err != nil {
 		return conv, err
 	}
@@ -183,6 +184,11 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	if err == nil && len(conv.Messages) <= 3 {
 		err = c.listChats(conv.ID)
 	}
+	elapsed := time.Since(start).Round(time.Second)
+	if usage != nil {
+		log.Infof("Usage: prompt tokens=%d  reasoning tokens=%d  completion tokens=%d  elapsed=%s",
+			usage.PromptTokens, usage.CompletionTokensDetails.ReasoningTokens, usage.CompletionTokens, elapsed)
+	}
 	return conv, err
 }
 
@@ -190,18 +196,18 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 func (c *Connection) streamMessage(delta openai.ChatCompletionStreamChoiceDelta) error {
 	if delta.Role == "tool" {
 		log.Debug("tool response: ", delta.Content)
-		return c.sendUpdate("analysis", "\n```\n"+delta.Content+"\n```\n")
+		return c.sendUpdate("analysis", `<pre><code class="tool-response">`+delta.Content+`</code></pre>`, false)
 	}
 	if delta.ReasoningContent != "" {
-		return c.sendUpdate("analysis", delta.ReasoningContent)
+		return c.sendUpdate("analysis", delta.ReasoningContent, false)
 	}
 	if delta.Content != "" {
-		return c.sendUpdate("final", delta.Content)
+		return c.sendUpdate("final", delta.Content, false)
 	}
 	return nil
 }
 
-func (c *Connection) sendUpdate(channel, text string) error {
+func (c *Connection) sendUpdate(channel, text string, end bool) error {
 	if c.channel != channel {
 		c.channel = channel
 		c.content = ""
@@ -215,7 +221,7 @@ func (c *Connection) sendUpdate(channel, text string) error {
 	if channel == "final" && !strings.Contains(text, "\n") {
 		return nil
 	}
-	r := api.Response{Action: "add", Message: api.Message{Type: channel, Content: toHTML(c.content, channel), Update: c.sequence > 0}}
+	r := api.Response{Action: "add", Message: api.Message{Type: channel, Content: toHTML(c.content, channel), Update: c.sequence > 0, End: end}}
 	c.sequence++
 	return c.conn.WriteJSON(r)
 }
@@ -344,7 +350,11 @@ func toHTML(content, msgType string) string {
 			log.Error("error converting markdown:", err)
 		}
 	}
-	return "<p>" + strings.ReplaceAll(content, "\n", "<br>") + "</p>"
+	content = strings.ReplaceAll(content, "\n", "<br>")
+	if msgType != "analysis" {
+		return "<p>" + content + "</p>"
+	}
+	return content
 }
 
 func loadJSON(file string, v any) error {

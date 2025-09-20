@@ -40,6 +40,7 @@ type Conversation struct {
 type Message struct {
 	Type    string `json:"type"`   // user | analysis | final
 	Update  bool   `json:"update"` // true if update to existing message
+	End     bool   `json:"end"`    // true if update and message is now complete
 	Content string `json:"content"`
 }
 

@@ -72,7 +72,7 @@ function loadChat(chat, conv, showReasoning) {
 function refreshChat(chat, showReasoning) {
 	console.log("refresh chat reasoning=%s", showReasoning);
 	for (const item of chat.querySelectorAll("li.analysis")) {
-		item.style.display = (showReasoning) ? "block" : "none";
+		item.style.display = (showReasoning) ? "flex" : "none";
 	}
 }
 
@@ -159,10 +159,24 @@ function initMenuControls(app) {
 		app.send({ action: "config" });
 	});
 
-	const checkbox = document.getElementById("reasoning-history")
+	const checkbox = document.getElementById("reasoning-history");
 	checkbox.addEventListener("click", e => {
 		app.showReasoning = checkbox.checked;
 		refreshChat(app.chat, app.showReasoning);
+	});
+}
+
+function initChatControls(app) {
+	app.chat.addEventListener("click", e => {
+		const collapsed = e.target.closest(".tool-response");
+		if (collapsed) {
+			collapsed.setAttribute("class", "tool-response-expanded");
+			return;
+		}
+		const expanded = e.target.closest(".tool-response-expanded");
+		if (expanded) {
+			expanded.setAttribute("class", "tool-response");
+		}
 	});
 }
 
@@ -208,14 +222,15 @@ function initInputTextbox(app) {
 // Websocket communication with server
 class App {
 	connected = false;
-	showReasoning = false;
 
 	constructor() {
 		this.socket = this.initWebsocket();
 		this.chat = document.getElementById("chat-list");
+		this.showReasoning = document.getElementById("reasoning-history").checked;
 		initInputTextbox(this);
 		initMenuControls(this);
 		initFormControls(this);
+		initChatControls(this);
 	}
 
 	initWebsocket() {
@@ -240,6 +255,9 @@ class App {
 		switch (resp.action) {
 			case "add":
 				addMessage(this.chat, resp.message.type, resp.message.content, resp.message.update);
+				if (resp.message.end && !this.showReasoning) {
+					refreshChat(app.chat, false);
+				}
 				break;
 			case "list":
 				const id = (resp.conversation) ? resp.conversation.id : "";

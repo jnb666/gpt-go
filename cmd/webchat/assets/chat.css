@@ -10,7 +10,7 @@ code {
 
 pre code {
     display: block;
-    overflow-x: auto;
+    overflow: auto;
     padding: 1em;
     color: #fff;
     background: #1c1b1b;
@@ -242,11 +242,22 @@ a:active {
 
 .analysis .msg {
     font-size: 12px;
-    padding: 5px 10px;
+    padding: 10px;
 }
 
 .analysis pre {
     margin: 0;
+}
+
+.tool-response {
+    height: 2.5rem;
+    margin-top: 5px;
+    margin-bottom: 5px;
+}
+
+.tool-response-expanded {
+    margin-top: 5px;
+    margin-bottom: 5px;
 }
 
 /* bottom bar and input widget */

@@ -13,9 +13,7 @@ import (
 )
 
 func main() {
-	config := openai.DefaultConfig("")
-	config.BaseURL = "http://localhost:8080/v1"
-	client := openai.NewClientWithConfig(config)
+	client := api.NewClient()
 
 	browse := &browser.Browser{BraveApiKey: os.Getenv("BRAVE_API_KEY")}
 	tools := browse.Tools()
@@ -26,9 +24,8 @@ func main() {
 	conv.Messages = append(conv.Messages, api.Message{Type: "user", Content: "who is Prime Minister of the UK?"})
 
 	req := api.NewRequest(conv, tools...)
-	//fmt.Println(pretty(req))
 
-	resp, err := api.CreateChatCompletionStream(context.Background(), client, req, printOutput(), tools...)
+	resp, _, err := api.CreateChatCompletionStream(context.Background(), client, req, printOutput(), tools...)
 	if err != nil {
 		log.Fatal(err)
 

@@ -1,0 +1,12 @@
+[Unit]
+Description=llama.cpp server
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/john/gpt-go/scripts/llama-server.sh gpt-oss-120b-unsloth-F16.gguf --n-gpu-layers 999 --n-cpu-moe 26 --swa-full --no-mmap
+User=llama
+Group=llama
+
+[Install]
+WantedBy=multi-user.target

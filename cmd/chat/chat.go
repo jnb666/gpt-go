@@ -9,13 +9,12 @@ import (
 	"log"
 	"os"
 
+	"github.com/jnb666/gpt-go/api"
 	openai "github.com/sashabaranov/go-openai"
 )
 
 func main() {
-	config := openai.DefaultConfig("")
-	config.BaseURL = "http://localhost:8080/v1"
-	client := openai.NewClientWithConfig(config)
+	client := api.NewClient()
 	var req openai.ChatCompletionRequest
 
 	input := bufio.NewReader(os.Stdin)

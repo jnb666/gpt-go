@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/sashabaranov/go-openai"
 )
@@ -17,20 +18,39 @@ type ToolFunction interface {
 	Call(args json.RawMessage) string
 }
 
+// Create a new openai client with default config.
+// BaseURL is from OPENAI_BASE_URL env var if set else http://localhost:8080/v1"
+func NewClient() *openai.Client {
+	config := openai.DefaultConfig("")
+	if url := os.Getenv("OPENAI_BASE_URL"); url != "" {
+		config.BaseURL = url
+	} else {
+		config.BaseURL = "http://localhost:8080/v1"
+	}
+	return openai.NewClientWithConfig(config)
+}
+
 // Send streaming chat request to client and calls callback func with updates. Returns accumulated response.
 // If tools are defined and the response ends with a tool call then invoke the Call method adds the results
 // to the request before resending.
 func CreateChatCompletionStream(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
-	callback func(openai.ChatCompletionStreamChoiceDelta) error, tools ...ToolFunction) (choice openai.ChatCompletionChoice, err error) {
+	callback func(openai.ChatCompletionStreamChoiceDelta) error, tools ...ToolFunction) (choice openai.ChatCompletionChoice, usage *openai.Usage, err error) {
 
+	reasoningTokens := 0
 	for {
-		choice, err := createChatCompletionStream(ctx, client, request, callback)
+		choice, usage, err := createChatCompletionStream(ctx, client, request, callback)
+		if usage != nil {
+			usage.CompletionTokensDetails = &openai.CompletionTokensDetails{ReasoningTokens: reasoningTokens}
+		}
 		if err != nil || len(choice.Message.ToolCalls) == 0 {
-			return choice, err
+			return choice, usage, err
+		}
+		if usage != nil {
+			reasoningTokens += usage.CompletionTokens
 		}
 		resp, err := callTool(choice.Message.ToolCalls[0].Function, tools)
 		if err != nil {
-			return choice, err
+			return choice, usage, err
 		}
 		callback(openai.ChatCompletionStreamChoiceDelta{Role: openai.ChatMessageRoleTool, Content: resp})
 
@@ -59,27 +79,30 @@ func callTool(fn openai.FunctionCall, tools []ToolFunction) (string, error) {
 
 // Send streaming chat request to client and calls callback func with updates. Returns accumulated response.
 func createChatCompletionStream(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
-	callback func(openai.ChatCompletionStreamChoiceDelta) error) (choice openai.ChatCompletionChoice, err error) {
+	callback func(openai.ChatCompletionStreamChoiceDelta) error) (choice openai.ChatCompletionChoice, usage *openai.Usage, err error) {
 
 	stream, err := client.CreateChatCompletionStream(ctx, request)
 	if err != nil {
-		return choice, err
+		return choice, usage, err
 	}
 	defer stream.Close()
 	for {
 		resp, err := stream.Recv()
+		if resp.Usage != nil {
+			usage = resp.Usage
+		}
 		if errors.Is(err, io.EOF) {
-			return choice, nil
+			return choice, usage, nil
 		}
 		if err != nil {
-			return choice, err
+			return choice, usage, err
 		}
 		if len(resp.Choices) == 0 {
 			continue
 		}
 		delta := resp.Choices[0].Delta
 		if err = callback(delta); err != nil {
-			return choice, err
+			return choice, usage, err
 		}
 		choice.Message.Content += delta.Content
 		choice.Message.ReasoningContent += delta.ReasoningContent
