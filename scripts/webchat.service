@@ -1,0 +1,13 @@
+[Unit]
+Description=gpt-go webchat server
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/home/john/go/bin/webchat
+EnvironmentFile=/home/john/gpt-go/.env
+User=john
+Group=john
+
+[Install]
+WantedBy=multi-user.target

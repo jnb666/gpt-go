@@ -14,8 +14,9 @@ import (
 
 func main() {
 	client := api.NewClient()
+	browse := browser.NewBrowser(os.Getenv("BRAVE_API_KEY"))
+	defer browse.Close()
 
-	browse := &browser.Browser{BraveApiKey: os.Getenv("BRAVE_API_KEY")}
 	tools := browse.Tools()
 	cfg := api.DefaultConfig(tools...)
 	cfg.ToolDescription = browse.Description()
@@ -28,7 +29,6 @@ func main() {
 	resp, _, err := api.CreateChatCompletionStream(context.Background(), client, req, printOutput(), tools...)
 	if err != nil {
 		log.Fatal(err)
-
 	}
 	fmt.Println()
 	fmt.Printf("\n## postprocesssed\n%s\n", browse.Postprocess(resp.Message.Content))

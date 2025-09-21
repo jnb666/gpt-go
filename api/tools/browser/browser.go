@@ -4,41 +4,45 @@ package browser
 import (
 	"encoding/json"
 	"fmt"
-	"html"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/jnb666/gpt-go/api"
 	"github.com/jnb666/gpt-go/api/tools"
 	"github.com/jnb666/gpt-go/markdown"
+	"github.com/jnb666/gpt-go/scrape"
 	"github.com/sashabaranov/go-openai"
 	log "github.com/sirupsen/logrus"
 )
 
 var (
 	// Default configuration
-	Timeout            = 5 * time.Second
 	Country            = "gb"
 	Language           = "en"
 	WrapColumn         = 120
 	MaxWords           = 300
 	FindMaxWords       = 150
 	BraveSearchURL     = "https://api.search.brave.com/res/v1/web/search"
-	FirecrawlURL       = "http://localhost:3002/v2/scrape"
-	MaxCacheAge        = 24 * time.Hour
 	MaxLinkTitleLength = 100
 )
 
 // Current browser state with documents retrieved in this session
 type Browser struct {
-	BraveApiKey     string
-	FirecrawlApiKey string
-	Docs            []markdown.Document
-	Cursor          int
+	Docs        []markdown.Document
+	Cursor      int
+	scaper      scrape.Browser
+	braveApiKey string
+}
+
+// Create new browser instance
+func NewBrowser(braveApiKey string) *Browser {
+	return &Browser{
+		scaper:      scrape.NewBrowser(),
+		braveApiKey: braveApiKey,
+	}
 }
 
 // Get all defined functions
@@ -54,6 +58,11 @@ func (b *Browser) Tools() []api.ToolFunction {
 func (b *Browser) Reset() {
 	b.Cursor = 0
 	b.Docs = b.Docs[:0]
+}
+
+// Close browser and release all resources
+func (b Browser) Close() {
+	b.scaper.Shutdown()
 }
 
 // Generic description text common to all functions
@@ -169,12 +178,12 @@ type searchResponse struct {
 
 // Call Brave web search API
 func (t Search) search(query string, topn int) (resp searchResponse, err error) {
-	if t.BraveApiKey == "" {
+	if t.braveApiKey == "" {
 		return resp, fmt.Errorf("BraveApiKey is required for search")
 	}
 	uri := fmt.Sprintf("%s?q=%s&count=%d&country=%s&search_lang=%s&text_decorations=false",
 		BraveSearchURL, url.QueryEscape(query), topn, Country, Language)
-	err = tools.Get(uri, &resp, tools.Header{Key: "X-Subscription-Token", Value: t.BraveApiKey})
+	err = tools.Get(uri, &resp, tools.Header{Key: "X-Subscription-Token", Value: t.braveApiKey})
 	if err != nil {
 		return resp, err
 	}
@@ -184,7 +193,7 @@ func (t Search) search(query string, topn int) (resp searchResponse, err error) 
 	return resp, nil
 }
 
-// Tool to fetch a web URL using Firecrawl - implements api.ToolFunction interface
+// Tool to fetch a web URL using scrape module - implements api.ToolFunction interface
 type Open struct {
 	*Browser
 	MaxWords int
@@ -227,12 +236,12 @@ func (t Open) Call(arg json.RawMessage) string {
 	var err error
 	switch url := args.ID.(type) {
 	case string:
-		doc, err = t.scrape(url, "")
+		doc, err = t.scrape(url, "", "")
 	case float64:
 		id := int(url)
 		if current, err = t.current(args.Cursor); err == nil {
 			if id >= 0 && id < len(current.Links) {
-				doc, err = t.scrape(current.Links[id].URL, current.Links[id].Title)
+				doc, err = t.scrape(current.Links[id].URL, current.Links[id].Title, current.URL)
 			} else {
 				doc = current
 			}
@@ -251,42 +260,22 @@ func (t Open) Call(arg json.RawMessage) string {
 	return doc.Format(t.Cursor, t.MaxWords)
 }
 
-type scrapeResponse struct {
-	Success bool
-	Data    struct {
-		Markdown string
-		RawHTML  string
-		Metadata struct {
-			Title      string
-			StatusCode int
-		}
-	}
-}
-
 // get markdown content for url and extract links from result
-func (t Open) scrape(url, title string) (doc markdown.Document, err error) {
-	request := map[string]any{
-		"url":     url,
-		"formats": []string{"markdown", "rawHtml"},
-		"maxAge":  MaxCacheAge.Milliseconds(),
-		"timeout": Timeout.Milliseconds(),
-	}
-	var reply scrapeResponse
-	log.Info("    ", url)
+func (t Open) scrape(url, title, referer string) (doc markdown.Document, err error) {
 	doc.URL = url
-	err = tools.Post(FirecrawlURL, request, &reply, tools.Header{Key: "Authorization", Value: "Bearer " + t.FirecrawlApiKey})
+	doc.Title = title
+	opts := scrape.DefaultOptions
+	opts.Referer = referer
+	resp, err := t.scaper.Scrape(url, opts)
 	if err != nil {
 		return doc, err
 	}
-	if reply.Data.Metadata.Title != "" {
-		title = reply.Data.Metadata.Title
-	} else {
-		title = htmlTitle(reply.Data.RawHTML, title, url)
+	if resp.StatusText != "OK" {
+		err = fmt.Errorf("Error %d: %s", resp.Status, resp.StatusText)
+	} else if resp.Title != "" {
+		title = resp.Title
 	}
-	if !reply.Success {
-		return doc, fmt.Errorf("error retrieving page: %s", title)
-	}
-	doc = markdown.QuoteLinks(reply.Data.Markdown, url, title, WrapColumn)
+	doc = markdown.QuoteLinks(resp.Markdown, url, title, WrapColumn)
 	return doc, err
 }
 
@@ -354,19 +343,6 @@ func (t Find) Call(arg json.RawMessage) string {
 func errorResponse(err error) string {
 	log.Error(err)
 	return fmt.Sprintf("Error: %s", err)
-}
-
-var titleRegexp = regexp.MustCompile(`(?i)<title>(.+?)</title>`)
-
-func htmlTitle(doc, title, url string) string {
-	m := titleRegexp.FindStringSubmatch(doc)
-	if len(m) >= 2 {
-		return html.UnescapeString(m[1])
-	}
-	if title != "" {
-		return title
-	}
-	return url
 }
 
 func linkTitle(s string) string {

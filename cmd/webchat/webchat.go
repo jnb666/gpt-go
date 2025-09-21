@@ -37,15 +37,32 @@ func main() {
 	var debug bool
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.Parse()
+	log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	if debug {
 		log.SetLevel(log.DebugLevel)
+	}
+
+	var browse *browser.Browser
+	var tools []api.ToolFunction
+	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
+		browse = browser.NewBrowser(apiKey)
+		defer browse.Close()
+		tools = append(tools, browse.Tools()...)
+	} else {
+		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
+	}
+
+	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
+		tools = append(tools, weather.Tools(apiKey)...)
+	} else {
+		log.Warn("skipping weather tools support - OWM_API_KEY env variable is not defined")
 	}
 
 	mux := &http.ServeMux{}
 	mux.Handle("/", fsHandler())
 
 	log.Println("Serving website at http://localhost:8000")
-	mux.HandleFunc("/websocket", websocketHandler)
+	mux.HandleFunc("/websocket", websocketHandler(browse, tools))
 
 	err := http.ListenAndServe(":8000", logRequestHandler(mux))
 	if err != nil {
@@ -54,51 +71,57 @@ func main() {
 }
 
 // handler for websocket connections
-func websocketHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Error("websocket upgrade: ", err)
-		return
-	}
-	defer conn.Close()
+func websocketHandler(browse *browser.Browser, tools []api.ToolFunction) http.HandlerFunc {
 
-	c := newConnection(conn)
-
-	cfg := api.DefaultConfig(c.tools...)
-	if c.browser != nil {
-		cfg.ToolDescription = c.browser.Description()
-	}
-
-	err = loadJSON("config.json", &cfg)
-	if err != nil {
-		log.Error(err)
-	}
-	log.Debugf("initial config: %#v", cfg)
-	conv := api.NewConversation(cfg)
-
-	for {
-		var req api.Request
-		err = conn.ReadJSON(&req)
+	return func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Error("read message: ", err)
+			log.Error("websocket upgrade: ", err)
 			return
 		}
-		switch req.Action {
-		case "list":
-			err = c.listChats(conv.ID)
-		case "add":
-			conv, err = c.addMessage(conv, req.Message)
-		case "load":
-			conv, err = c.loadChat(req.ID, cfg)
-		case "delete":
-			conv, err = c.deleteChat(req.ID, cfg)
-		case "config":
-			conv, err = c.configOptions(conv, &cfg, req.Config)
-		default:
-			err = fmt.Errorf("request %q not supported", req.Action)
+		defer conn.Close()
+
+		c := &Connection{
+			conn:    conn,
+			client:  api.NewClient(),
+			tools:   tools,
+			browser: browse,
 		}
+		cfg := api.DefaultConfig(c.tools...)
+		if c.browser != nil {
+			cfg.ToolDescription = c.browser.Description()
+		}
+		err = loadJSON("config.json", &cfg)
 		if err != nil {
 			log.Error(err)
+		}
+		log.Debugf("initial config: %#v", cfg)
+		conv := api.NewConversation(cfg)
+
+		for {
+			var req api.Request
+			err = conn.ReadJSON(&req)
+			if err != nil {
+				log.Error("read message: ", err)
+				return
+			}
+			switch req.Action {
+			case "list":
+				err = c.listChats(conv.ID)
+			case "add":
+				conv, err = c.addMessage(conv, req.Message)
+			case "load":
+				conv, err = c.loadChat(req.ID, cfg)
+			case "delete":
+				conv, err = c.deleteChat(req.ID, cfg)
+			case "config":
+				conv, err = c.configOptions(conv, &cfg, req.Config)
+			default:
+				err = fmt.Errorf("request %q not supported", req.Action)
+			}
+			if err != nil {
+				log.Error(err)
+			}
 		}
 	}
 }
@@ -113,26 +136,6 @@ type Connection struct {
 	content  string
 	analysis string
 	sequence int
-}
-
-// init connection with openai client and tool functions
-func newConnection(conn *websocket.Conn) *Connection {
-	c := &Connection{
-		conn:   conn,
-		client: api.NewClient(),
-	}
-	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
-		c.tools = weather.Tools(apiKey)
-	} else {
-		log.Warn("skipping weather tools support - OWM_API_KEY env variable is not defined")
-	}
-	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
-		c.browser = &browser.Browser{BraveApiKey: apiKey}
-		c.tools = append(c.tools, c.browser.Tools()...)
-	} else {
-		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
-	}
-	return c
 }
 
 // get list of saved conversation ids and current model id

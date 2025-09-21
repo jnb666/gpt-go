@@ -3,67 +3,94 @@ package browser
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
 func TestSearch(t *testing.T) {
-	browser, resp := doSearch(t, "local LLM hosting")
+	browser := newBrowser()
+	defer browser.Close()
+	resp := doSearch(t, browser, "local LLM hosting")
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
 }
 
 func TestOpenURL(t *testing.T) {
-	browser := Browser{FirecrawlApiKey: "none"}
-	open := Open{Browser: &browser, MaxWords: MaxWords}
-	args, _ := json.Marshal(map[string]any{"id": "https://itsabanana.dev/posts/local_llm_hosting-part1/"})
-	resp := open.Call(args)
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/posts/local_llm_hosting-part1/"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
 }
 
-func TestOpenID(t *testing.T) {
-	browser, _ := doSearch(t, "local LLM hosting")
-	open := Open{Browser: &browser, MaxWords: MaxWords}
+func TestNotFound(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/nonsuch/"}))
+	t.Logf("response:\n%s", resp)
+	if !strings.HasPrefix(resp, "Error 404: Not Found") {
+		t.Error("expecting error")
+	}
+}
 
-	args, _ := json.Marshal(map[string]any{"id": 3})
-	resp := open.Call(args)
+func TestBlocked(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp := open.Call(marshal(map[string]any{"id": "https://www.g2.com/"}))
+	t.Logf("response:\n%s", resp)
+	if !strings.HasPrefix(resp, "Error 403: Forbidden") {
+		t.Error("expecting error")
+	}
+}
+
+func TestOpenID(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	doSearch(t, browser, "local LLM hosting")
+
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp := open.Call(marshal(map[string]any{"id": 3}))
 	t.Logf("response:\n%s", resp)
 
-	args, _ = json.Marshal(map[string]any{"loc": 40})
-	resp = open.Call(args)
+	resp = open.Call(marshal(map[string]any{"loc": 63}))
 	t.Logf("scroll page:\n%s", resp)
 
 	printLinks(t, browser, 10)
 }
 
 func TestFind(t *testing.T) {
-	browser, _ := doSearch(t, "local LLM hosting")
-	open := Open{Browser: &browser, MaxWords: MaxWords}
+	browser := newBrowser()
+	defer browser.Close()
 
-	args, _ := json.Marshal(map[string]any{"id": 1})
-	resp := open.Call(args)
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp := open.Call(marshal(map[string]any{"id": "https://blog.n8n.io/local-llm/"}))
 	t.Logf("open response:\n%s", resp)
 
 	find := Find{Browser: open.Browser, MaxWords: FindMaxWords}
-	args, _ = json.Marshal(map[string]any{"pattern": "ollama"})
 	for range 3 {
-		resp = find.Call(args)
+		resp = find.Call(marshal(map[string]any{"pattern": "video ram"}))
 		t.Logf("find response:\n%s", resp)
 	}
+	printLinks(t, browser, 10)
 }
 
-func doSearch(t *testing.T, query string) (Browser, string) {
-	browser := Browser{BraveApiKey: os.Getenv("BRAVE_API_KEY"), FirecrawlApiKey: "none"}
-	search := Search{Browser: &browser, MaxWords: MaxWords}
-	args, _ := json.Marshal(map[string]any{"query": query})
-	resp := search.Call(args)
+func newBrowser() *Browser {
+	return NewBrowser(os.Getenv("BRAVE_API_KEY"))
+}
+
+func doSearch(t *testing.T, browser *Browser, query string) string {
+	search := Search{Browser: browser, MaxWords: MaxWords}
+	resp := search.Call(marshal(map[string]any{"query": query}))
 	if len(browser.Docs) != 1 {
 		t.Fatal("no document returned")
 	}
-	return browser, resp
+	return resp
 }
 
-func printLinks(t *testing.T, b Browser, num int) {
+func printLinks(t *testing.T, b *Browser, num int) {
 	if b.Cursor >= len(b.Docs) {
 		t.Fatal("no doc retrieved")
 	}
@@ -78,4 +105,9 @@ func printLinks(t *testing.T, b Browser, num int) {
 	if len(doc.Links) < num {
 		t.Errorf("expecting at least %d links", num)
 	}
+}
+
+func marshal(args any) []byte {
+	data, _ := json.Marshal(args)
+	return data
 }

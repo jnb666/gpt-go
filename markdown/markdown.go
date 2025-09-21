@@ -87,6 +87,17 @@ func URLHost(uri string) string {
 	return u.Hostname()
 }
 
+// URL excluding #fragment
+func URLBase(uri string) string {
+	u, err := url.Parse(uri)
+	if err != nil {
+		log.Warn("Error parsing url:", err)
+		return uri
+	}
+	u.Fragment = ""
+	return u.String()
+}
+
 // Parse source and replace links with 【<id>†<title>†<host>] format
 func QuoteLinks(source, url, title string, wrapColumn int) Document {
 	doc := Document{URL: url, Title: title, WrapColumn: wrapColumn}
@@ -119,6 +130,7 @@ type linkNode struct {
 
 func (t *linkTransformer) Transform(node *ast.Document, reader text.Reader, pc parser.Context) {
 	source := reader.Source()
+	base := URLBase(t.doc.URL)
 	host := URLHost(t.doc.URL)
 	var repl []linkNode
 	// find all image or link nodes
@@ -132,6 +144,10 @@ func (t *linkTransformer) Transform(node *ast.Document, reader text.Reader, pc p
 			return ast.WalkSkipChildren, nil
 		case *ast.Link:
 			link := Link{URL: string(n.Destination), Title: string(n.Text(source))}
+			if link.Title == "" || !strings.HasPrefix(link.URL, "http") || URLBase(link.URL) == base {
+				repl = append(repl, linkNode{parent: n.Parent(), child: n})
+				return ast.WalkSkipChildren, nil
+			}
 			ref := link.Format(len(t.doc.Links), host)
 			log.Debugf("%s - %s", ref, link.URL)
 			repl = append(repl, linkNode{parent: n.Parent(), child: n, text: ref})
