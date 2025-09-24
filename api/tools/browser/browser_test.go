@@ -19,7 +19,16 @@ func TestOpenURL(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	resp := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/posts/local_llm_hosting-part1/"}))
+	resp, _ := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/posts/local_llm_hosting-part1/"}))
+	t.Logf("response:\n%s", resp)
+	printLinks(t, browser, 10)
+}
+
+func TestOpenWikipedia(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	resp, _ := open.Call(marshal(map[string]any{"id": "https://en.wikipedia.org/wiki/Liz_Truss"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
 }
@@ -28,7 +37,7 @@ func TestNotFound(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	resp := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/nonsuch/"}))
+	resp, _ := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/nonsuch/"}))
 	t.Logf("response:\n%s", resp)
 	if !strings.HasPrefix(resp, "Error 404: Not Found") {
 		t.Error("expecting error")
@@ -39,7 +48,7 @@ func TestBlocked(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	resp := open.Call(marshal(map[string]any{"id": "https://www.g2.com/"}))
+	resp, _ := open.Call(marshal(map[string]any{"id": "https://www.g2.com/"}))
 	t.Logf("response:\n%s", resp)
 	if !strings.HasPrefix(resp, "Error 403: Forbidden") {
 		t.Error("expecting error")
@@ -52,10 +61,9 @@ func TestOpenID(t *testing.T) {
 	doSearch(t, browser, "local LLM hosting")
 
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	resp := open.Call(marshal(map[string]any{"id": 3}))
+	resp, _ := open.Call(marshal(map[string]any{"id": 3}))
 	t.Logf("response:\n%s", resp)
-
-	resp = open.Call(marshal(map[string]any{"loc": 63}))
+	resp, _ = open.Call(marshal(map[string]any{"loc": 63}))
 	t.Logf("scroll page:\n%s", resp)
 
 	printLinks(t, browser, 10)
@@ -66,12 +74,12 @@ func TestFind(t *testing.T) {
 	defer browser.Close()
 
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	resp := open.Call(marshal(map[string]any{"id": "https://blog.n8n.io/local-llm/"}))
+	resp, _ := open.Call(marshal(map[string]any{"id": "https://blog.n8n.io/local-llm/"}))
 	t.Logf("open response:\n%s", resp)
 
 	find := Find{Browser: open.Browser, MaxWords: FindMaxWords}
 	for range 3 {
-		resp = find.Call(marshal(map[string]any{"pattern": "video ram"}))
+		resp, _ = find.Call(marshal(map[string]any{"pattern": "video ram"}))
 		t.Logf("find response:\n%s", resp)
 	}
 	printLinks(t, browser, 10)
@@ -83,7 +91,10 @@ func newBrowser() *Browser {
 
 func doSearch(t *testing.T, browser *Browser, query string) string {
 	search := Search{Browser: browser, MaxWords: MaxWords}
-	resp := search.Call(marshal(map[string]any{"query": query}))
+	resp, err := search.Call(marshal(map[string]any{"query": query}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(browser.Docs) != 1 {
 		t.Fatal("no document returned")
 	}
@@ -107,7 +118,7 @@ func printLinks(t *testing.T, b *Browser, num int) {
 	}
 }
 
-func marshal(args any) []byte {
+func marshal(args any) string {
 	data, _ := json.Marshal(args)
-	return data
+	return string(data)
 }

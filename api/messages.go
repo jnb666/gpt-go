@@ -1,17 +1,15 @@
 package api
 
 import (
+	"fmt"
 	"slices"
-	"strings"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/shared"
+	log "github.com/sirupsen/logrus"
 )
-
-var defaultConfig = Config{
-	ModelIdentity:   "You are ChatGPT, a large language model trained by OpenAI.",
-	ReasoningEffort: "medium",
-}
 
 // Chat API request from frontend to webserver
 type Request struct {
@@ -26,9 +24,9 @@ type Response struct {
 	Action       string       `json:"action"`                // add | list | load | config
 	Message      Message      `json:"message,omitzero"`      // if action=add
 	Conversation Conversation `json:"conversation,omitzero"` // if action=load
-	Model        string       `json:"model,omitzero"`        // if action=list
 	List         []Item       `json:"list,omitzero"`         // if action=list
 	Config       Config       `json:"config,omitzero"`       // if action=config
+	Stats        Stats        `json:"stats,omitzero"`        // if action=add
 }
 
 type Conversation struct {
@@ -51,10 +49,8 @@ type Item struct {
 
 type Config struct {
 	SystemPrompt    string       `json:"system_prompt"`
-	ModelIdentity   string       `json:"model_identity"`
 	ReasoningEffort string       `json:"reasoning_effort"` // low | medium | high
 	Tools           []ToolConfig `json:"tools,omitzero"`
-	ToolDescription string       `json:"tools_description,omitzero"`
 }
 
 type ToolConfig struct {
@@ -62,11 +58,56 @@ type ToolConfig struct {
 	Enabled bool   `json:"enabled"`
 }
 
+type Stats struct {
+	Model            string         `json:"model"`             // model name
+	ApiCalls         int            `json:"api_calls"`         // total number of API calls
+	ApiTime          int            `json:"api_time"`          // total elapsed time in API calls in msec
+	CompletionTokens int            `json:"completion_tokens"` // no. of completion tokens generated
+	PromptTokens     int            `json:"prompt_tokens"`     // max prompt length
+	ToolCalls        int            `json:"tool_calls"`        // total number of tool calls
+	Functions        map[string]int `json:"functions"`         // numer of tool calls by function name
+	ToolTime         int            `json:"tool_time"`         // total elapsed time in tool calls in msec
+}
+
+func newStats() Stats {
+	return Stats{Functions: map[string]int{}}
+}
+
+func (s *Stats) Loginfo() {
+	log.Infof("%d API calls in %s  %d prompt tokens  %d completion tokens at %.1f tok/sec",
+		s.ApiCalls, msec(s.ApiTime), s.PromptTokens, s.CompletionTokens, s.CompletionTokensPerSec())
+	if s.ToolCalls > 0 {
+		funcs := fmt.Sprint(s.Functions)
+		log.Infof("%d tool calls in %s - %s", s.ToolCalls, msec(s.ToolTime), funcs[4:len(funcs)-1])
+	}
+}
+
+func (s *Stats) CompletionTokensPerSec() float64 {
+	if s.ApiTime > 0 {
+		return 1000 * float64(s.CompletionTokens) / float64(s.ApiTime)
+	}
+	return 0
+}
+
+func (s *Stats) update(model string, u openai.CompletionUsage, start time.Time) {
+	s.Model = model
+	s.ApiCalls++
+	s.ApiTime += int(time.Since(start).Milliseconds())
+	s.CompletionTokens += int(u.CompletionTokens)
+	s.PromptTokens = int(u.PromptTokens)
+}
+
+func (s *Stats) toolCalled(name string, start time.Time) {
+	s.ToolCalls++
+	s.Functions[name]++
+	s.ToolTime += int(time.Since(start).Milliseconds())
+}
+
 // Get default configuration with given tools enabled
 func DefaultConfig(tools ...ToolFunction) Config {
-	cfg := defaultConfig
+	cfg := Config{ReasoningEffort: "medium"}
 	for _, tool := range tools {
-		cfg.Tools = append(cfg.Tools, ToolConfig{Name: tool.Definition().Function.Name, Enabled: true})
+		cfg.Tools = append(cfg.Tools, ToolConfig{Name: tool.Definition().Name, Enabled: true})
 	}
 	return cfg
 }
@@ -80,37 +121,31 @@ func NewConversation(cfg Config) Conversation {
 }
 
 // Create a new chat completion request with given config settings.
-func NewRequest(conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionRequest) {
+func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionNewParams) {
 	cfg := conv.Config
-	req.ChatTemplateKwargs = map[string]any{}
-	if cfg.ModelIdentity != "" {
-		req.ChatTemplateKwargs["model_identity"] = cfg.ModelIdentity
-	}
-	if cfg.ReasoningEffort != "" {
-		req.ChatTemplateKwargs["reasoning_effort"] = cfg.ReasoningEffort
-	}
-	var system []string
+	req.Model = shared.ChatModel(modelName)
+	req.ReasoningEffort = shared.ReasoningEffort(cfg.ReasoningEffort)
 	if cfg.SystemPrompt != "" {
-		system = append(system, cfg.SystemPrompt)
+		req.Messages = append(req.Messages, openai.DeveloperMessage(cfg.SystemPrompt))
 	}
-	if cfg.ToolDescription != "" {
-		system = append(system, cfg.ToolDescription)
-	}
-	if len(system) > 0 {
-		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleDeveloper, Content: strings.Join(system, "\n\n")})
-	}
+	var enabledTools []ToolFunction
 	for _, tool := range tools {
 		def := tool.Definition()
-		if slices.ContainsFunc(cfg.Tools, func(t ToolConfig) bool { return t.Enabled && t.Name == def.Function.Name }) {
-			req.Tools = append(req.Tools, def)
+		if slices.ContainsFunc(cfg.Tools, func(t ToolConfig) bool { return t.Enabled && t.Name == def.Name }) {
+			enabledTools = append(enabledTools, tool)
 		}
 	}
+	req.Tools = ChatCompletionToolParams(enabledTools)
 	for _, msg := range conv.Messages {
 		if msg.Type == "user" {
-			req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleUser, Content: msg.Content})
+			req.Messages = append(req.Messages, openai.UserMessage(msg.Content))
 		} else if msg.Type == "final" {
-			req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: openai.ChatMessageRoleAssistant, Content: msg.Content})
+			req.Messages = append(req.Messages, openai.AssistantMessage(msg.Content))
 		}
 	}
 	return req
+}
+
+func msec(n int) string {
+	return (time.Duration(n) * time.Millisecond).String()
 }

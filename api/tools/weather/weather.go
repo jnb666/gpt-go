@@ -10,7 +10,8 @@ import (
 
 	"github.com/jnb666/gpt-go/api"
 	"github.com/jnb666/gpt-go/api/tools"
-	"github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -26,37 +27,36 @@ type Current struct {
 	ApiKey string
 }
 
-func (t Current) Definition() openai.Tool {
-	fn := openai.FunctionDefinition{
-		Name: "get_current_weather",
-		Description: `Get the current weather in a given location.
-Returns conditions with temperatures in Celsius and wind speed in meters/second.`,
-		Parameters: json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"location": {
-			"type": "string",
-			"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\""
-		}
-	},
-	"required": ["location"]
-}`)}
-	return openai.Tool{Type: openai.ToolTypeFunction, Function: &fn}
+func (t Current) Definition() shared.FunctionDefinitionParam {
+	return shared.FunctionDefinitionParam{
+		Name:   "get_current_weather",
+		Strict: openai.Bool(true),
+		Description: openai.String("Get the current weather in a given location.\n" +
+			"// Returns conditions with temperatures in Celsius and wind speed in meters/second.",
+		),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"location": map[string]any{
+					"type":        "string",
+					"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\"",
+				},
+			},
+			"required": []string{"location"},
+		},
+	}
 }
 
-func (t Current) Call(arg json.RawMessage) string {
+func (t Current) Call(arg string) (string, error) {
 	log.Printf("call get_current_weather(%s)", arg)
 	var args struct {
 		Location string
 	}
-	if err := json.Unmarshal(arg, &args); err != nil {
-		return errorResponse(err)
+	if err := json.Unmarshal([]byte(arg), &args); err != nil {
+		return "", err
 	}
 	w, err := currentWeather(args.Location, t.ApiKey)
-	if err != nil {
-		return errorResponse(err)
-	}
-	return w.String()
+	return w.String(), err
 }
 
 // Tool to get weather forecast data - implements api.ToolFunction interface
@@ -64,46 +64,45 @@ type Forecast struct {
 	ApiKey string
 }
 
-func (t Forecast) Definition() openai.Tool {
-	fn := openai.FunctionDefinition{
-		Name: "get_weather_forecast",
-		Description: `Get the weather forecast in a given location.
-Returns a list with date and time in local timezone and predicted conditions every 3 hours.
-Temperatures are in Celsius and wind speed in meters/second.`,
-		Parameters: json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"location": {
-			"type": "string",
-			"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\""
+func (t Forecast) Definition() shared.FunctionDefinitionParam {
+	return shared.FunctionDefinitionParam{
+		Name:   "get_weather_forecast",
+		Strict: openai.Bool(true),
+		Description: openai.String("Get the weather forecast in a given location.\n" +
+			"// Returns a list with date and time in local timezone and predicted conditions every 3 hours.\n" +
+			"// Temperatures are in Celsius and wind speed in meters/second."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"location": map[string]any{
+					"type":        "string",
+					"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\"",
+				},
+				"periods": map[string]any{
+					"type":        "number",
+					"description": "Number of 3 hour periods to look ahead from current time",
+					"default":     24,
+				},
+			},
+			"required": []string{"location"},
 		},
-		"periods": {
-			"type": "number",
-			"description": "Number of 3 hour periods to look ahead from current time - default 24"
-		}
-	},
-	"required": ["location"]
-}`)}
-	return openai.Tool{Type: openai.ToolTypeFunction, Function: &fn}
+	}
 }
 
-func (t Forecast) Call(arg json.RawMessage) string {
+func (t Forecast) Call(arg string) (string, error) {
 	log.Printf("call get_weather_forecast(%s)", arg)
 	var args struct {
 		Location string
-		Periods  int
+		Periods  float64
 	}
-	if err := json.Unmarshal(arg, &args); err != nil {
-		return errorResponse(err)
+	if err := json.Unmarshal([]byte(arg), &args); err != nil {
+		return "", err
 	}
 	if args.Periods == 0 {
 		args.Periods = 24
 	}
-	w, err := weatherForecast(args.Location, args.Periods, t.ApiKey)
-	if err != nil {
-		return errorResponse(err)
-	}
-	return w.String()
+	w, err := weatherForecast(args.Location, int(args.Periods), t.ApiKey)
+	return w.String(), err
 }
 
 // Current weather API per https://openweathermap.org/current
@@ -218,10 +217,6 @@ func (l location) String() string {
 }
 
 // Util functions
-func errorResponse(err error) string {
-	return fmt.Sprintf("Error: %s", err)
-}
-
 func localtime(dt, timezone int) string {
 	t := time.Unix(int64(dt), 0)
 	loc := time.FixedZone("", timezone)

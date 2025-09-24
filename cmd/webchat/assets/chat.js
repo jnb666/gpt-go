@@ -24,7 +24,6 @@ function selectLink(list, id) {
 
 function refreshChatList(model, list, currentID) {
 	console.log("refresh chat list: current=%s", currentID);
-	document.getElementById("model-name").textContent = model;
 	const parent = document.getElementById("conv-list");
 	parent.replaceChildren();
 	if (list) {
@@ -87,7 +86,6 @@ function showConfig(cfg) {
 	const form = document.getElementById("config-form");
 	const radio = form.querySelectorAll(`input[name="reasoning"]`);
 	
-	form.identity.value = cfg.model_identity;
 	form.system.value = cfg.system_prompt;
 	for (const el of radio) {
 		el.checked = (el.value == cfg.reasoning_effort);
@@ -104,13 +102,28 @@ function showConfig(cfg) {
 	}
 }
 
+function duration(ms) {
+	return (ms >= 1000) ? (ms/1000).toFixed(1)+"s" : ms+"ms";
+}
+
+function updateStats(stats) {
+	console.log("stats:", stats);
+	const tokensPerSec = 1000 * stats.completion_tokens / stats.api_time;
+	document.getElementById("model-name").textContent = stats.model;
+	document.getElementById("stats-calls").textContent = `${stats.api_calls} API calls in ${duration(stats.api_time)}`;
+	if (stats.tool_calls) {
+		document.getElementById("stats-tools").textContent = `${stats.tool_calls} tool calls in ${duration(stats.tool_time)}`;
+	}
+	document.getElementById("stats-tokens").textContent = `${stats.prompt_tokens}+${stats.completion_tokens} tokens`;
+	document.getElementById("stats-speed").textContent = `${tokensPerSec.toFixed(1)} tok/sec`;
+}
+
 function initFormControls(app) {
 	const form = document.getElementById("config-form");
 
 	form.addEventListener("submit", e => {
 		e.preventDefault();
 		const cfg = {
-			model_identity: form.identity.value,
 			system_prompt: form.system.value,
 			reasoning_effort: "medium",
 			tools: []
@@ -257,6 +270,9 @@ class App {
 				addMessage(this.chat, resp.message.type, resp.message.content, resp.message.update);
 				if (resp.message.end && !this.showReasoning) {
 					refreshChat(app.chat, false);
+				}
+				if (resp.stats) {
+					updateStats(resp.stats);
 				}
 				break;
 			case "list":

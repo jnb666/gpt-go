@@ -10,6 +10,11 @@ var mediaExtensions = []string{
 }
 
 var tagsToRemove = []string{
+	"head",
+	"script",
+	"style",
+	"noscript",
+	"meta",
 	"header",
 	"footer",
 	"nav",
@@ -51,6 +56,13 @@ var tagsToRemove = []string{
 	"#widget",
 	".cookie",
 	"#cookie",
+}
+
+var tagsToKeep = []string{
+	"body",
+	"main",
+	"section",
+	"article",
 }
 
 var addServingDomains = []string{

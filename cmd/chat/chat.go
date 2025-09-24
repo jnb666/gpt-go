@@ -3,87 +3,74 @@ package main
 import (
 	"bufio"
 	"context"
-	"errors"
+	"flag"
 	"fmt"
-	"io"
-	"log"
 	"os"
+	"strings"
 
 	"github.com/jnb666/gpt-go/api"
-	openai "github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/shared"
+	log "github.com/sirupsen/logrus"
 )
 
 func main() {
-	client := api.NewClient()
-	var req openai.ChatCompletionRequest
+	var nostream, openrouter bool
+	var systemPrompt, reasoning string
+	flag.StringVar(&reasoning, "reasoning", "medium", "set reasoning - low, medium or high")
+	flag.StringVar(&systemPrompt, "system", "", "set custom system prompt")
+	flag.BoolVar(&api.Debug, "debug", false, "enable debug logging")
+	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
+	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
+	flag.Parse()
+
+	baseURL, modelName := api.DefaultModel(openrouter)
+	log.Infof("connecting to %s %s", baseURL, modelName)
+	client := openai.NewClient(option.WithBaseURL(baseURL))
+
+	req := openai.ChatCompletionNewParams{
+		Model:           modelName,
+		ReasoningEffort: shared.ReasoningEffort(reasoning),
+	}
+	if systemPrompt != "" {
+		req.Messages = append(req.Messages, openai.SystemMessage(systemPrompt))
+	}
+	if api.Debug {
+		api.Pprint(req)
+	}
 
 	input := bufio.NewReader(os.Stdin)
+	ctx := context.Background()
 
 	for {
 		fmt.Print("> ")
 		question, err := input.ReadString('\n')
 		if err != nil {
-			log.Fatal(err)
+			break
 		}
-		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: "user", Content: question})
-
-		resp, err := createChatCompletionStream(context.Background(), client, req, printOutput())
-		if err != nil {
-			log.Fatal(err)
-
+		req.Messages = append(req.Messages, openai.UserMessage(strings.TrimSpace(question)))
+		var message string
+		var stats api.Stats
+		if nostream {
+			message, stats, err = api.ChatCompletion(ctx, client, req, printOutput)
+		} else {
+			message, stats, err = api.ChatCompletionStream(ctx, client, req, printOutput)
 		}
 		fmt.Println()
-		req.Messages = append(req.Messages, openai.ChatCompletionMessage{Role: "assistant", Content: resp.Message.Content})
-	}
-}
-
-// Print output from chat completion stream to stdout
-func printOutput() func(openai.ChatCompletionStreamChoiceDelta) {
-	channel := ""
-	return func(delta openai.ChatCompletionStreamChoiceDelta) {
-		if delta.ReasoningContent != "" {
-			if channel == "" {
-				fmt.Println("## analysis")
-				channel = "analysis"
-			}
-			fmt.Print(delta.ReasoningContent)
-		}
-		if delta.Content != "" {
-			if channel == "analysis" {
-				fmt.Println("\n\n## final")
-				channel = "final"
-			}
-			fmt.Print(delta.Content)
-		}
-	}
-}
-
-// Send streaming chat request to client and calls callback func with updates. Returns accumulated response.
-func createChatCompletionStream(ctx context.Context, client *openai.Client, request openai.ChatCompletionRequest,
-	callback func(openai.ChatCompletionStreamChoiceDelta)) (choice openai.ChatCompletionChoice, err error) {
-
-	stream, err := client.CreateChatCompletionStream(ctx, request)
-	if err != nil {
-		return choice, err
-	}
-	defer stream.Close()
-	for {
-		resp, err := stream.Recv()
-		if errors.Is(err, io.EOF) {
-			return choice, nil
-		}
+		stats.Loginfo()
 		if err != nil {
-			return choice, err
+			log.Error(err)
 		}
-		if len(resp.Choices) == 0 {
-			continue
-		}
-		delta := resp.Choices[0].Delta
-		callback(delta)
-		choice.Message.Content += delta.Content
-		choice.Message.ReasoningContent += delta.ReasoningContent
-		if resp.Choices[0].FinishReason != "" {
-			choice.FinishReason = resp.Choices[0].FinishReason
-		}
+		req.Messages = append(req.Messages, openai.AssistantMessage(message))
+	}
+}
+
+func printOutput(channel, content string, index int, end bool) {
+	if index == 0 {
+		fmt.Printf("== %s ==\n", channel)
+	}
+	if index == 0 || !end {
+		fmt.Print(content)
 	}
 }

@@ -10,9 +10,11 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -20,7 +22,8 @@ import (
 	"github.com/jnb666/gpt-go/api/tools/browser"
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
-	"github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/option"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -33,46 +36,73 @@ var assets embed.FS
 
 var upgrader websocket.Upgrader
 
+var debug, nostream, openrouter bool
+
 func main() {
-	var debug bool
+	var server http.Server
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
+	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
+	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
+	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
+	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
 	flag.Parse()
+
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	var browse *browser.Browser
-	var tools []api.ToolFunction
-	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
-		browse = browser.NewBrowser(apiKey)
-		defer browse.Close()
-		tools = append(tools, browse.Tools()...)
-	} else {
-		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
+	http.Handle("/", fsHandler())
+	ctx, wsCancel := context.WithCancel(context.Background())
+	http.HandleFunc("/websocket", websocketHandler(ctx))
+
+	// launch web server in background
+	go func() {
+		addr := server.Addr
+		if strings.HasPrefix(addr, ":") {
+			host, _ := os.Hostname()
+			addr = host + addr
+		}
+		log.Infof("Serving website at http://%s", addr)
+		err := server.ListenAndServe()
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal("HTTP server error: ", err)
+		}
+	}()
+
+	// shutdown cleanly on signal
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+	<-ch
+	wsCancel()
+	time.Sleep(100 * time.Millisecond)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		log.Fatal("HTTP shutdown error: ", err)
 	}
+	log.Info("server shutdown")
+}
 
-	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
-		tools = append(tools, weather.Tools(apiKey)...)
-	} else {
-		log.Warn("skipping weather tools support - OWM_API_KEY env variable is not defined")
-	}
+// connection state for websocket
+type Connection struct {
+	conn     *websocket.Conn
+	client   openai.Client
+	stats    api.Stats
+	tools    []api.ToolFunction
+	browser  *browser.Browser
+	content  string
+	analysis string
+	first    bool
+}
 
-	mux := &http.ServeMux{}
-	mux.Handle("/", fsHandler())
-
-	log.Println("Serving website at http://localhost:8000")
-	mux.HandleFunc("/websocket", websocketHandler(browse, tools))
-
-	err := http.ListenAndServe(":8000", logRequestHandler(mux))
-	if err != nil {
-		log.Fatal(err)
-	}
+type Message struct {
+	req api.Request
+	err error
 }
 
 // handler for websocket connections
-func websocketHandler(browse *browser.Browser, tools []api.ToolFunction) http.HandlerFunc {
-
+func websocketHandler(ctx context.Context) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -81,61 +111,93 @@ func websocketHandler(browse *browser.Browser, tools []api.ToolFunction) http.Ha
 		}
 		defer conn.Close()
 
+		baseURL, modelName := api.DefaultModel(openrouter)
+		log.Infof("connecting to %s %s", baseURL, modelName)
 		c := &Connection{
-			conn:    conn,
-			client:  api.NewClient(),
-			tools:   tools,
-			browser: browse,
+			conn:   conn,
+			client: openai.NewClient(option.WithBaseURL(baseURL)),
 		}
+		c.browser, c.tools = initTools()
+		defer c.browser.Close()
+
 		cfg := api.DefaultConfig(c.tools...)
-		if c.browser != nil {
-			cfg.ToolDescription = c.browser.Description()
-		}
 		err = loadJSON("config.json", &cfg)
 		if err != nil {
 			log.Error(err)
 		}
 		log.Debugf("initial config: %#v", cfg)
-		conv := api.NewConversation(cfg)
 
-		for {
-			var req api.Request
-			err = conn.ReadJSON(&req)
-			if err != nil {
-				log.Error("read message: ", err)
-				return
-			}
-			switch req.Action {
-			case "list":
-				err = c.listChats(conv.ID)
-			case "add":
-				conv, err = c.addMessage(conv, req.Message)
-			case "load":
-				conv, err = c.loadChat(req.ID, cfg)
-			case "delete":
-				conv, err = c.deleteChat(req.ID, cfg)
-			case "config":
-				conv, err = c.configOptions(conv, &cfg, req.Config)
-			default:
-				err = fmt.Errorf("request %q not supported", req.Action)
-			}
-			if err != nil {
-				log.Error(err)
-			}
+		err = c.handleWebsocket(ctx, cfg, modelName)
+		if err != nil {
+			log.Warn(err)
+		} else {
+			log.Info("close websocket")
 		}
 	}
 }
 
-// connection state for websocket
-type Connection struct {
-	conn     *websocket.Conn
-	client   *openai.Client
-	tools    []api.ToolFunction
-	browser  *browser.Browser
-	channel  string
-	content  string
-	analysis string
-	sequence int
+func pollWebsocket(conn *websocket.Conn, ch chan Message) {
+	for {
+		var msg Message
+		msg.err = conn.ReadJSON(&msg.req)
+		ch <- msg
+	}
+}
+
+func readMsg(ctx context.Context, ch chan Message) (req api.Request, err error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return req, ctx.Err()
+		case msg := <-ch:
+			return msg.req, msg.err
+		}
+	}
+}
+
+func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, model string) error {
+	conv := api.NewConversation(cfg)
+	ch := make(chan Message)
+	go pollWebsocket(c.conn, ch)
+	for {
+		req, err := readMsg(ctx, ch)
+		if err != nil {
+			return err
+		}
+		switch req.Action {
+		case "list":
+			err = c.listChats(conv.ID)
+		case "add":
+			conv, err = c.addMessage(conv, req.Message, model)
+		case "load":
+			conv, err = c.loadChat(req.ID, cfg)
+		case "delete":
+			conv, err = c.deleteChat(req.ID, cfg)
+		case "config":
+			conv, err = c.configOptions(conv, &cfg, req.Config)
+		default:
+			return fmt.Errorf("request %q not supported", req.Action)
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+// initialise supported tools
+func initTools() (browse *browser.Browser, tools []api.ToolFunction) {
+	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
+		browse = browser.NewBrowser(apiKey)
+		tools = append(tools, browse.Tools()...)
+	} else {
+		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
+	}
+	if apiKey := os.Getenv("OWM_API_KEY"); apiKey != "" {
+		tools = append(tools, weather.Tools(apiKey)...)
+	} else {
+		log.Warn("skipping weather tools support - OWM_API_KEY env variable is not defined")
+	}
+	return
 }
 
 // get list of saved conversation ids and current model id
@@ -143,10 +205,6 @@ func (c *Connection) listChats(currentID string) error {
 	log.Infof("list saved chats: current=%s", currentID)
 	var err error
 	resp := api.Response{Action: "list", Conversation: api.Conversation{ID: currentID}}
-	resp.Model, err = modelName(c.client)
-	if err != nil {
-		return err
-	}
 	resp.List, err = getSavedConversations()
 	if err != nil {
 		return err
@@ -155,30 +213,32 @@ func (c *Connection) listChats(currentID string) error {
 }
 
 // add new message from user to chat, get streaming response, returns updated message list
-func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Conversation, error) {
-	start := time.Now()
+func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model string) (api.Conversation, error) {
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
-	req := api.NewRequest(conv, c.tools...)
-	req.StreamOptions = &openai.StreamOptions{IncludeUsage: true}
-	c.channel = ""
+	req := api.NewRequest(model, conv, c.tools...)
 	c.content = ""
 	c.analysis = ""
-	c.sequence = 0
+	c.first = true
 	if c.browser != nil {
 		c.browser.Reset()
 	}
-	_, usage, err := api.CreateChatCompletionStream(context.Background(), c.client, req, c.streamMessage, c.tools...)
+	var err error
+	ctx := context.Background()
+	c.stats = api.Stats{}
+	if nostream {
+		_, c.stats, err = api.ChatCompletion(ctx, c.client, req, c.sendUpdate, c.tools...)
+	} else {
+		_, c.stats, err = api.ChatCompletionStream(ctx, c.client, req, c.sendUpdate, c.tools...)
+	}
+	c.stats.Loginfo()
 	if err != nil {
 		return conv, err
 	}
 	if c.browser != nil && len(c.browser.Docs) > 0 {
 		c.content = c.browser.Postprocess(c.content)
 	}
-	err = c.sendUpdate("final", "\n", true)
-	if err != nil {
-		return conv, err
-	}
+	c.sendUpdate("final", c.content, -1, true)
 	if c.analysis != "" {
 		conv.Messages = append(conv.Messages, api.Message{Type: "analysis", Content: c.analysis})
 	}
@@ -187,46 +247,45 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	if err == nil && len(conv.Messages) <= 3 {
 		err = c.listChats(conv.ID)
 	}
-	elapsed := time.Since(start).Round(time.Second)
-	if usage != nil {
-		log.Infof("Usage: prompt tokens=%d  reasoning tokens=%d  completion tokens=%d  elapsed=%s",
-			usage.PromptTokens, usage.CompletionTokensDetails.ReasoningTokens, usage.CompletionTokens, elapsed)
-	}
 	return conv, err
 }
 
 // chat completion stream callback to send updates to front end
-func (c *Connection) streamMessage(delta openai.ChatCompletionStreamChoiceDelta) error {
-	if delta.Role == "tool" {
-		log.Debug("tool response: ", delta.Content)
-		return c.sendUpdate("analysis", `<pre><code class="tool-response">`+delta.Content+`</code></pre>`, false)
-	}
-	if delta.ReasoningContent != "" {
-		return c.sendUpdate("analysis", delta.ReasoningContent, false)
-	}
-	if delta.Content != "" {
-		return c.sendUpdate("final", delta.Content, false)
-	}
-	return nil
-}
-
-func (c *Connection) sendUpdate(channel, text string, end bool) error {
-	if c.channel != channel {
-		c.channel = channel
-		c.content = ""
-		c.sequence = 0
-	}
-	c.content += text
-	if channel == "analysis" {
+func (c *Connection) sendUpdate(channel, text string, index int, end bool) {
+	r := api.Response{Action: "add", Stats: c.stats}
+	switch channel {
+	case "analysis":
+		r.Message.Type = "analysis"
+		r.Message.Update = c.analysis != ""
 		c.analysis += text
+		r.Message.Content = c.analysis
+	case "tool":
+		r.Message.Type = "analysis"
+		r.Message.Update = c.analysis != ""
+		c.analysis += `<pre><code class="tool-response">` + text + `</code></pre>`
+		r.Message.Content = c.analysis
+	case "final":
+		if end {
+			// always complete message
+			c.content = text
+		} else {
+			c.content += text
+			// only render final markdown content when new line is generated
+			if !strings.Contains(text, "\n") {
+				return
+			}
+		}
+		r.Message.Update = !c.first
+		r.Message.Content = toHTML(c.content, "final")
+		r.Message.End = end
+		c.first = false
+	default:
+		log.Errorf("invalid channel %q", channel)
+		return
 	}
-	// only render final markdown content when new line is generated
-	if channel == "final" && !strings.Contains(text, "\n") {
-		return nil
+	if err := c.conn.WriteJSON(r); err != nil {
+		log.Error(err)
 	}
-	r := api.Response{Action: "add", Message: api.Message{Type: channel, Content: toHTML(c.content, channel), Update: c.sequence > 0, End: end}}
-	c.sequence++
-	return c.conn.WriteJSON(r)
 }
 
 // load conversation with given id, or new conversation if blank
@@ -241,7 +300,6 @@ func (c *Connection) loadChat(id string, cfg api.Config) (conv api.Conversation,
 				conv.Config.Tools = append(conv.Config.Tools, api.ToolConfig{Name: tool.Name})
 			}
 		}
-
 	} else {
 		conv = api.NewConversation(cfg)
 	}
@@ -286,18 +344,6 @@ func (c *Connection) configOptions(conv api.Conversation, cfg, update *api.Confi
 		}
 	}
 	return conv, err
-}
-
-// current loaded model name
-func modelName(client *openai.Client) (string, error) {
-	resp, err := client.ListModels(context.Background())
-	if err != nil {
-		return "", err
-	}
-	if len(resp.Models) == 0 {
-		return "", fmt.Errorf("model name not found")
-	}
-	return strings.TrimSuffix(filepath.Base(resp.Models[0].ID), ".gguf"), nil
 }
 
 // list of saved conversation files

@@ -7,7 +7,6 @@ import (
 	"html"
 	"net/url"
 	"regexp"
-	"slices"
 	"strings"
 	"unicode"
 
@@ -162,7 +161,7 @@ func (t *linkTransformer) Transform(node *ast.Document, reader text.Reader, pc p
 			next := r.child.NextSibling()
 			if next != nil && next.Kind() == ast.KindText {
 				prev := string(next.Text(source))
-				r.parent.ReplaceChild(r.parent, next, ast.NewString([]byte(r.text+prev)))
+				r.parent.ReplaceChild(r.parent, next, ast.NewString([]byte(r.text+" "+prev)))
 				r.parent.RemoveChild(r.parent, r.child)
 			} else {
 				r.parent.ReplaceChild(r.parent, r.child, ast.NewString([]byte(r.text)))
@@ -241,8 +240,4 @@ func (d *Document) Write(text string) {
 			}
 		}
 	}
-}
-
-func incompleteLink(r []rune) bool {
-	return slices.Contains(r, '【') && !slices.Contains(r, '】')
 }

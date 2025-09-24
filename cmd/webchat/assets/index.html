@@ -9,16 +9,17 @@
     <link rel="stylesheet" href="katex.min.css">
   </head>
   <body>
-  <body>
-    <div id="nav">
-      <div class="pure-menu">
-        <span class="pure-menu-heading heading-text">Conversations</span>
-        <ul id="conv-list" class="pure-menu-list">
-        </ul>
-      </div>
-    </div>
     <div class="chat-menu">
-      <div id="model-name" class="chat-menu-left heading-text">
+      <div class="chat-menu-left">
+        <span id="model-name" class="heading-text"></span>
+        <span class="chat-menu-spacer"></span>
+        <label id="stats-calls"></label>
+        <span class="chat-menu-spacer"></span>
+        <label id="stats-tokens"></label>
+        <span class="chat-menu-spacer"></span>
+        <label id="stats-speed"></label>
+        <span class="chat-menu-spacer"></span>
+        <label id="stats-tools"></label>
       </div>
       <div class="chat-menu-right pure-form">
         <label for="reasoning-history"><input id="reasoning-history" type="checkbox"> show all reasoning</label>
@@ -30,14 +31,17 @@
         <button id="options" class="button-small pure-button pure-button-primary">options</button>
       </div>
     </div>
+    <div id="nav">
+      <div class="pure-menu">
+        <span class="pure-menu-heading heading-text">Conversations</span>
+        <ul id="conv-list" class="pure-menu-list">
+        </ul>
+      </div>
+    </div>
     <ol id="chat-list">
     </ol>
     <div id="config-page" style="display: none;">
-      <form id="config-form" class="pure-form pure-form-aligned">
-        <label>model identity:</label>
-        <div>
-          <input name="identity" type="text">
-        </div>  
+      <form id="config-form" class="pure-form pure-form-aligned"> 
         <label>system prompt:</label>
         <div>
           <textarea name="system"></textarea>

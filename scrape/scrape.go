@@ -16,6 +16,7 @@ import (
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/base"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/commonmark"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/plugin/table"
+	"github.com/PuerkitoBio/goquery"
 	"github.com/playwright-community/playwright-go"
 	log "github.com/sirupsen/logrus"
 )
@@ -62,20 +63,17 @@ func NewBrowser(headless ...bool) Browser {
 		headless = []bool{true}
 	}
 	br, err := pw.Firefox.Launch(playwright.BrowserTypeLaunchOptions{Headless: &headless[0]})
+	if err != nil {
+		panic(err)
+	}
 	return Browser{playwright: pw, browser: br, cache: map[string]Response{}}
 }
 
 // Close browser and stop playwright
 func (b Browser) Shutdown() {
 	log.Info("scrape: shutdown browser")
-	err := b.browser.Close()
-	if err != nil {
-		log.Warn(err)
-	}
-	err = b.playwright.Stop()
-	if err != nil {
-		log.Warn(err)
-	}
+	b.browser.Close()
+	b.playwright.Stop()
 }
 
 // Scrape page response data
@@ -107,7 +105,7 @@ func (b Browser) Scrape(uri string, opts ...Options) (r Response, err error) {
 	if err != nil {
 		e := new(playwright.Error)
 		if errors.As(err, &e) {
-			return r, fmt.Errorf("Error getting page: %s", e.Message)
+			return r, fmt.Errorf("error getting page: %s", e.Message)
 		}
 		return r, err
 	}
@@ -204,6 +202,25 @@ func (b Browser) delay(uri string, maxSpeed time.Duration) {
 var reStrip = regexp.MustCompile(`(?m)\s*<!--THE END-->\n*`)
 
 func toMarkdown(r Response) (Response, error) {
+	// filter tags
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(r.RawHTML))
+	if err != nil {
+		return r, err
+	}
+	for _, tag := range tagsToRemove {
+		doc.Find(tag).Each(func(n int, s *goquery.Selection) {
+			node := s.Nodes[0]
+			if tag[0] != '.' && tag[0] != '#' || !slices.Contains(tagsToKeep, node.Data) {
+				log.Debugf("remove %s %s", node.Data, tag)
+				s.Remove()
+			}
+		})
+	}
+	html, err := doc.Html()
+	if err != nil {
+		return r, err
+	}
+	// convert to markdown
 	conv := converter.NewConverter(
 		converter.WithPlugins(
 			base.NewBasePlugin(),
@@ -211,11 +228,7 @@ func toMarkdown(r Response) (Response, error) {
 			table.NewTablePlugin(),
 		),
 	)
-	for _, tag := range tagsToRemove {
-		conv.Register.TagType(tag, converter.TagTypeRemove, converter.PriorityStandard)
-	}
-	var err error
-	r.Markdown, err = conv.ConvertString(r.RawHTML, converter.WithDomain(r.URL))
+	r.Markdown, err = conv.ConvertString(html, converter.WithDomain(r.URL))
 	r.Markdown = reStrip.ReplaceAllLiteralString(r.Markdown, "")
 	return r, err
 }

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/jnb666/gpt-go/api"
-	"github.com/jnb666/gpt-go/api/tools/browser"
+	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
 	log "github.com/sirupsen/logrus"
@@ -26,9 +26,7 @@ func main() {
 	log.Infof("connecting to %s %s", baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
-	browse := browser.NewBrowser(os.Getenv("BRAVE_API_KEY"))
-	defer browse.Close()
-	tools := browse.Tools()
+	tools := weather.Tools(os.Getenv("OWM_API_KEY"))
 
 	req := openai.ChatCompletionNewParams{
 		Model: modelName,
@@ -40,7 +38,6 @@ func main() {
 
 	input := bufio.NewReader(os.Stdin)
 	ctx := context.Background()
-	printOutput := printOutputFunc(browse)
 
 	for {
 		fmt.Print("> ")
@@ -65,16 +62,11 @@ func main() {
 	}
 }
 
-func printOutputFunc(browse *browser.Browser) api.CallbackFunc {
-	return func(channel, content string, index int, end bool) {
-		if index == 0 {
-			fmt.Printf("== %s ==\n", channel)
-		}
-		if end {
-			fmt.Println("== postprocessed ==")
-			fmt.Print(browse.Postprocess(content))
-		} else {
-			fmt.Print(content)
-		}
+func printOutput(channel, content string, index int, end bool) {
+	if index == 0 {
+		fmt.Printf("== %s ==\n", channel)
+	}
+	if index == 0 || !end {
+		fmt.Print(content)
 	}
 }

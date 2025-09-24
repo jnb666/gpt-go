@@ -14,7 +14,8 @@ import (
 	"github.com/jnb666/gpt-go/api/tools"
 	"github.com/jnb666/gpt-go/markdown"
 	"github.com/jnb666/gpt-go/scrape"
-	"github.com/sashabaranov/go-openai"
+	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -61,18 +62,10 @@ func (b *Browser) Reset() {
 }
 
 // Close browser and release all resources
-func (b Browser) Close() {
-	b.scaper.Shutdown()
-}
-
-// Generic description text common to all functions
-func (b *Browser) Description() string {
-	return "## browser\n\n" +
-		"// Tool for browsing.\n" +
-		"// The `cursor` appears in brackets before each browsing display: `[{cursor}]`.\n" +
-		"// Cite information from the tool using the following format:\n" +
-		"// `【{cursor}†L{line_start}(-L{line_end})?】`, for example: `【6†L9-L11】` or `【8†L3】`.\n" +
-		"// Do not quote more than 10 words directly from the tool output."
+func (b *Browser) Close() {
+	if b != nil {
+		b.scaper.Shutdown()
+	}
 }
 
 var citationRegexp = regexp.MustCompile(`【(\d+)†(L.+?)】`)
@@ -104,7 +97,7 @@ func (b *Browser) current(cursor int) (doc markdown.Document, err error) {
 	if b.Cursor >= 0 && b.Cursor < len(b.Docs) {
 		return b.Docs[b.Cursor], nil
 	}
-	return doc, fmt.Errorf("Document at cursor %d not found", cursor)
+	return doc, fmt.Errorf("document at cursor %d not found", cursor)
 }
 
 func (b *Browser) add(doc markdown.Document) {
@@ -118,38 +111,45 @@ type Search struct {
 	MaxWords int
 }
 
-func (t Search) Definition() openai.Tool {
-	fn := openai.FunctionDefinition{
-		Name:        "browser.search",
-		Description: "Searches the web for information related to `query` and displays `topn` results.",
-		Parameters: json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"query": {"type":"string"},
-		"topn": {"type":"number", "description":"default: 10"}
-	},
-	"required": ["query"]
-}`)}
-	return openai.Tool{Type: openai.ToolTypeFunction, Function: &fn}
+func (t Search) Definition() shared.FunctionDefinitionParam {
+	return shared.FunctionDefinitionParam{
+		Name:   "browser_search",
+		Strict: openai.Bool(true),
+		Description: openai.String("## browser\n\n" +
+			"// Tool for browsing.\n" +
+			"// The `cursor` appears in brackets before each browsing display: `[{cursor}]`.\n" +
+			"// Cite information from the tool using the following format:\n" +
+			"// `【{cursor}†L{line_start}(-L{line_end})?】`, for example: `【6†L9-L11】` or `【8†L3】`.\n" +
+			"\n" +
+			"// Searches the web for information related to `query` and displays `topn` results."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"query": map[string]any{"type": "string"},
+				"topn":  map[string]any{"type": "number", "default": 10},
+			},
+			"required": []string{"query"},
+		},
+	}
 }
 
 // Perform a web search add the returned results to the Browser Docs and return markdown formatted text
-func (t Search) Call(arg json.RawMessage) string {
-	log.Infof("[%d] browser.search(%s)", len(t.Docs), arg)
+func (t Search) Call(arg string) (string, error) {
+	log.Infof("[%d] browser_search(%s)", len(t.Docs), arg)
 	var args struct {
 		Query string
-		TopN  int
+		TopN  float64
 	}
 	args.TopN = 10
-	if err := json.Unmarshal(arg, &args); err != nil {
-		return errorResponse(err)
+	if err := json.Unmarshal([]byte(arg), &args); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(args.Query) == "" {
-		return errorResponse(fmt.Errorf("query argument is required"))
+		return errorResponse(fmt.Errorf("query argument is required")), nil
 	}
-	resp, err := t.search(args.Query, args.TopN)
+	resp, err := t.search(args.Query, int(args.TopN))
 	if err != nil {
-		return errorResponse(err)
+		return errorResponse(err), nil
 	}
 	doc := markdown.Document{
 		Title:      fmt.Sprintf("Web search for “%s”", args.Query),
@@ -165,7 +165,7 @@ func (t Search) Call(arg json.RawMessage) string {
 		doc.Links = append(doc.Links, link)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords)
+	return doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 type searchResponse struct {
@@ -199,38 +199,39 @@ type Open struct {
 	MaxWords int
 }
 
-func (t Open) Definition() openai.Tool {
-	fn := openai.FunctionDefinition{
-		Name: "browser.open",
-		Description: "Opens the link `id` from the page indicated by `cursor` starting at line number `loc`.\n" +
-			"Valid link ids are displayed with the formatting: `【{id}†.*】`.\n" +
-			"If `cursor` is not provided, the most recent page is implied.\n" +
-			"If `id` is a string, it is treated as a fully qualified URL.\n" +
-			"If `loc` is not provided, the viewport will be positioned at the beginning of the document.\n" +
-			"Use this function without `id` to scroll to a new location of an opened page.",
-		Parameters: json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"cursor": {"type": "number", "description":"default: -1"},
-		"id": {"type":["number","string"], "description":"default: -1"},
-		"loc": {"type":"number", "description":"default: -1"}
+func (t Open) Definition() shared.FunctionDefinitionParam {
+	return shared.FunctionDefinitionParam{
+		Name:   "browser_open",
+		Strict: openai.Bool(true),
+		Description: openai.String("Opens the link `id` from the page indicated by `cursor` starting at line number `loc`.\n" +
+			"// Valid link ids are displayed with the formatting: `【{id}†.*】`.\n" +
+			"// If `cursor` is not provided, the most recent page is implied.\n" +
+			"// If `id` is a string, it is treated as a fully qualified URL.\n" +
+			"// If `loc` is not provided, the viewport will be positioned at the beginning of the document.\n" +
+			"// Use this function without `id` to scroll to a new location of an opened page."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"cursor": map[string]any{"type": "number", "default": -1},
+				"id":     map[string]any{"type": []string{"number", "string"}, "default": -1},
+				"loc":    map[string]any{"type": "number", "default": -1},
+			},
+		},
 	}
-}`)}
-	return openai.Tool{Type: openai.ToolTypeFunction, Function: &fn}
 }
 
 // Gets markdown content using a Firecrawl scape request
-func (t Open) Call(arg json.RawMessage) string {
-	log.Infof("[%d] browser.open(%s)", len(t.Docs), arg)
+func (t Open) Call(arg string) (string, error) {
+	log.Infof("[%d] browser_open(%s)", len(t.Docs), arg)
 	var args struct {
-		Cursor int
+		Cursor float64
 		ID     any
-		Loc    int
+		Loc    float64
 	}
 	args.Cursor = -1
 	args.Loc = -1
-	if err := json.Unmarshal(arg, &args); err != nil {
-		return errorResponse(err)
+	if err := json.Unmarshal([]byte(arg), &args); err != nil {
+		return "", err
 	}
 	var current, doc markdown.Document
 	var err error
@@ -239,7 +240,7 @@ func (t Open) Call(arg json.RawMessage) string {
 		doc, err = t.scrape(url, "", "")
 	case float64:
 		id := int(url)
-		if current, err = t.current(args.Cursor); err == nil {
+		if current, err = t.current(int(args.Cursor)); err == nil {
 			if id >= 0 && id < len(current.Links) {
 				doc, err = t.scrape(current.Links[id].URL, current.Links[id].Title, current.URL)
 			} else {
@@ -247,17 +248,17 @@ func (t Open) Call(arg json.RawMessage) string {
 			}
 		}
 	default:
-		doc, err = t.current(args.Cursor)
+		doc, err = t.current(int(args.Cursor))
 	}
 	if err != nil {
 		log.Error(err)
-		return fmt.Sprintf("%s\n(%s)\n", err, doc.URL)
+		return fmt.Sprintf("%s\n(%s)\n", err, doc.URL), nil
 	}
 	if args.Loc >= 0 {
-		doc.StartLine = args.Loc
+		doc.StartLine = int(args.Loc)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords)
+	return doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 // get markdown content for url and extract links from result
@@ -271,7 +272,7 @@ func (t Open) scrape(url, title, referer string) (doc markdown.Document, err err
 		return doc, err
 	}
 	if resp.StatusText != "OK" {
-		err = fmt.Errorf("Error %d: %s", resp.Status, resp.StatusText)
+		err = fmt.Errorf("error %d: %s", resp.Status, resp.StatusText)
 	} else if resp.Title != "" {
 		title = resp.Title
 	}
@@ -285,40 +286,41 @@ type Find struct {
 	MaxWords int
 }
 
-func (t Find) Definition() openai.Tool {
-	fn := openai.FunctionDefinition{
-		Name:        "browser.find",
-		Description: "Finds exact matches of `pattern` in the current page, or the page given by `cursor`.",
-		Parameters: json.RawMessage(`{
-	"type": "object",
-	"properties": {
-		"pattern": {"type":"string"},
-		"cursor": {"type":"number", "description":"default: -1"}
-	},
-	"required": ["pattern"]
-}`)}
-	return openai.Tool{Type: openai.ToolTypeFunction, Function: &fn}
+func (t Find) Definition() shared.FunctionDefinitionParam {
+	return shared.FunctionDefinitionParam{
+		Name:        "browser_find",
+		Strict:      openai.Bool(true),
+		Description: openai.String("Finds exact matches of `pattern` in the current page, or the page given by `cursor`."),
+		Parameters: shared.FunctionParameters{
+			"type": "object",
+			"properties": map[string]any{
+				"pattern": map[string]any{"type": "string"},
+				"cursor":  map[string]any{"type": "number", "default": -1},
+			},
+			"required": []string{"pattern"},
+		},
+	}
 }
 
 var reFind = regexp.MustCompile(`^Find results for “(.+?)” in “(.+?)”`)
 
-func (t Find) Call(arg json.RawMessage) string {
-	log.Infof("[%d] browser.find(%s)", len(t.Docs), arg)
+func (t Find) Call(arg string) (string, error) {
+	log.Infof("[%d] browser_find(%s)", len(t.Docs), arg)
 	// parse arguments
 	var args struct {
 		Pattern string
-		Cursor  int
+		Cursor  float64
 	}
 	args.Cursor = -1
-	if err := json.Unmarshal(arg, &args); err != nil {
-		return errorResponse(err)
+	if err := json.Unmarshal([]byte(arg), &args); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(args.Pattern) == "" {
-		return errorResponse(fmt.Errorf("pattern argument is required"))
+		return errorResponse(fmt.Errorf("pattern argument is required")), nil
 	}
-	current, err := t.current(args.Cursor)
+	current, err := t.current(int(args.Cursor))
 	if err != nil {
-		return errorResponse(err)
+		return errorResponse(err), nil
 	}
 	if m := reFind.FindStringSubmatch(current.Title); len(m) > 0 {
 		// search again in search page
@@ -337,7 +339,7 @@ func (t Find) Call(arg json.RawMessage) string {
 		doc.StartLine = len(doc.Lines)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords)
+	return doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 func errorResponse(err error) string {
