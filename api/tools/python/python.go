@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"time"
 
 	api "github.com/docker/docker/api/types/container"
@@ -70,13 +71,21 @@ func (c *Python) Stop() {
 
 // Execute python code within container with time limit
 func (c *Python) Call(input string) (code, resp string, err error) {
-	var value any
-	if err := json.Unmarshal([]byte(input), &value); err == nil {
-		code = decodeArgs(value)
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return input, "", fmt.Errorf("Error: no code to execute")
 	}
-	if code == "" {
-		log.Infof("python code:\n%s", input)
-		return code, "", fmt.Errorf("Error: invalid argument syntax - code should be a JSON encoded string")
+	if input[0] == '"' || input[0] == '{' {
+		var value any
+		if err := json.Unmarshal([]byte(input), &value); err == nil {
+			code = decodeArgs(value)
+		}
+		if code == "" {
+			log.Infof("python code:\n%s", input)
+			return code, "", fmt.Errorf("Error: invalid syntax")
+		}
+	} else {
+		code = input
 	}
 	log.Infof("python code:\n%s", code)
 

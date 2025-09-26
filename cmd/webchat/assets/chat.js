@@ -106,6 +106,12 @@ function duration(ms) {
 	return (ms >= 1000) ? (ms/1000).toFixed(1)+"s" : ms+"ms";
 }
 
+function clearStats() {
+	for (const key of ["stats-calls", "stats-tools", "stats-tokens", "stats-speed"]) {
+		document.getElementById(key).textContent = "";
+	}
+}
+
 function updateStats(stats) {
 	const tokensPerSec = 1000 * stats.completion_tokens / stats.api_time;
 	document.getElementById("model-name").textContent = stats.model;
@@ -213,6 +219,7 @@ function initInputTextbox(app) {
 			refreshChat(app.chat, false);
 		}
 		addMessage(app.chat, "user", `<p>${msg}</p>`);
+		clearStats();
 		app.send({ action: "add", message: { type: "user", content: msg } });
 		input.placeholder = "Type a message (Shift+Enter to add a new line)";
 	}

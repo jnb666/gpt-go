@@ -126,7 +126,8 @@ func ChatCompletion(ctx context.Context, client openai.Client, req openai.ChatCo
 		toolReq, toolResp, err := callTool(fn.Name, fn.Arguments, tools)
 		stats.toolCalled(fn.Name, start)
 		if err != nil {
-			return "", stats, err
+			toolResp = fmt.Sprintf("error calling %s: %v", fn.Name, err)
+			log.Error(toolResp)
 		}
 		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
 		// add call and response to request and resend
@@ -181,7 +182,8 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, req openai.
 		toolReq, toolResp, err := callTool(call.Name, call.Arguments, tools)
 		stats.toolCalled(call.Name, start)
 		if err != nil {
-			return "", stats, err
+			toolResp = fmt.Sprintf("error calling %s: %v", call.Name, err)
+			log.Error(toolResp)
 		}
 		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
 		req.Messages = append(req.Messages,
