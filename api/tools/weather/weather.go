@@ -47,16 +47,17 @@ func (t Current) Definition() shared.FunctionDefinitionParam {
 	}
 }
 
-func (t Current) Call(arg string) (string, error) {
+func (t Current) Call(arg string) (req, res string, err error) {
 	log.Printf("call get_current_weather(%s)", arg)
 	var args struct {
 		Location string
 	}
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
-		return "", err
+		return arg, "", err
 	}
+	req = fmt.Sprintf("get_current_weather%+v", args)
 	w, err := currentWeather(args.Location, t.ApiKey)
-	return w.String(), err
+	return req, w.String(), err
 }
 
 // Tool to get weather forecast data - implements api.ToolFunction interface
@@ -89,20 +90,21 @@ func (t Forecast) Definition() shared.FunctionDefinitionParam {
 	}
 }
 
-func (t Forecast) Call(arg string) (string, error) {
+func (t Forecast) Call(arg string) (req, res string, err error) {
 	log.Printf("call get_weather_forecast(%s)", arg)
 	var args struct {
 		Location string
 		Periods  float64
 	}
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
-		return "", err
+		return arg, "", err
 	}
 	if args.Periods == 0 {
 		args.Periods = 24
 	}
+	req = fmt.Sprintf("get_weather_forecast%+v", args)
 	w, err := weatherForecast(args.Location, int(args.Periods), t.ApiKey)
-	return w.String(), err
+	return req, w.String(), err
 }
 
 // Current weather API per https://openweathermap.org/current

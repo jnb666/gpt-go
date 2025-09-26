@@ -20,6 +20,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/jnb666/gpt-go/api"
 	"github.com/jnb666/gpt-go/api/tools/browser"
+	"github.com/jnb666/gpt-go/api/tools/python"
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
 	"github.com/openai/openai-go/v2"
@@ -91,6 +92,7 @@ type Connection struct {
 	stats    api.Stats
 	tools    []api.ToolFunction
 	browser  *browser.Browser
+	python   *python.Python
 	content  string
 	analysis string
 	first    bool
@@ -117,8 +119,9 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 			conn:   conn,
 			client: openai.NewClient(option.WithBaseURL(baseURL)),
 		}
-		c.browser, c.tools = initTools()
+		c.browser, c.python, c.tools = initTools()
 		defer c.browser.Close()
+		defer c.python.Stop()
 
 		cfg := api.DefaultConfig(c.tools...)
 		err = loadJSON("config.json", &cfg)
@@ -185,7 +188,9 @@ func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, model 
 }
 
 // initialise supported tools
-func initTools() (browse *browser.Browser, tools []api.ToolFunction) {
+func initTools() (browse *browser.Browser, pyexec *python.Python, tools []api.ToolFunction) {
+	pyexec = python.New()
+	tools = []api.ToolFunction{pyexec}
 	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
 		browse = browser.NewBrowser(apiKey)
 		tools = append(tools, browse.Tools()...)
@@ -220,9 +225,9 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 	c.content = ""
 	c.analysis = ""
 	c.first = true
-	if c.browser != nil {
-		c.browser.Reset()
-	}
+	c.browser.Reset()
+	c.python.Stop()
+
 	var err error
 	ctx := context.Background()
 	c.stats = api.Stats{}

@@ -57,8 +57,10 @@ func (b *Browser) Tools() []api.ToolFunction {
 
 // Reset saved document state
 func (b *Browser) Reset() {
-	b.Cursor = 0
-	b.Docs = b.Docs[:0]
+	if b != nil {
+		b.Cursor = 0
+		b.Docs = b.Docs[:0]
+	}
 }
 
 // Close browser and release all resources
@@ -134,7 +136,7 @@ func (t Search) Definition() shared.FunctionDefinitionParam {
 }
 
 // Perform a web search add the returned results to the Browser Docs and return markdown formatted text
-func (t Search) Call(arg string) (string, error) {
+func (t Search) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_search(%s)", len(t.Docs), arg)
 	var args struct {
 		Query string
@@ -142,14 +144,15 @@ func (t Search) Call(arg string) (string, error) {
 	}
 	args.TopN = 10
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
-		return "", err
+		return arg, "", err
 	}
+	req = fmt.Sprintf("browser.search%+v", args)
 	if strings.TrimSpace(args.Query) == "" {
-		return errorResponse(fmt.Errorf("query argument is required")), nil
+		return req, errorResponse(fmt.Errorf("query argument is required")), nil
 	}
 	resp, err := t.search(args.Query, int(args.TopN))
 	if err != nil {
-		return errorResponse(err), nil
+		return req, errorResponse(err), nil
 	}
 	doc := markdown.Document{
 		Title:      fmt.Sprintf("Web search for “%s”", args.Query),
@@ -165,7 +168,7 @@ func (t Search) Call(arg string) (string, error) {
 		doc.Links = append(doc.Links, link)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 type searchResponse struct {
@@ -221,7 +224,7 @@ func (t Open) Definition() shared.FunctionDefinitionParam {
 }
 
 // Gets markdown content using a Firecrawl scape request
-func (t Open) Call(arg string) (string, error) {
+func (t Open) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_open(%s)", len(t.Docs), arg)
 	var args struct {
 		Cursor float64
@@ -231,10 +234,10 @@ func (t Open) Call(arg string) (string, error) {
 	args.Cursor = -1
 	args.Loc = -1
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
-		return "", err
+		return arg, "", err
 	}
+	req = fmt.Sprintf("browser.open%+v", args)
 	var current, doc markdown.Document
-	var err error
 	switch url := args.ID.(type) {
 	case string:
 		doc, err = t.scrape(url, "", "")
@@ -252,13 +255,13 @@ func (t Open) Call(arg string) (string, error) {
 	}
 	if err != nil {
 		log.Error(err)
-		return fmt.Sprintf("%s\n(%s)\n", err, doc.URL), nil
+		return req, fmt.Sprintf("%s\n(%s)\n", err, doc.URL), nil
 	}
 	if args.Loc >= 0 {
 		doc.StartLine = int(args.Loc)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 // get markdown content for url and extract links from result
@@ -304,7 +307,7 @@ func (t Find) Definition() shared.FunctionDefinitionParam {
 
 var reFind = regexp.MustCompile(`^Find results for “(.+?)” in “(.+?)”`)
 
-func (t Find) Call(arg string) (string, error) {
+func (t Find) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_find(%s)", len(t.Docs), arg)
 	// parse arguments
 	var args struct {
@@ -313,14 +316,15 @@ func (t Find) Call(arg string) (string, error) {
 	}
 	args.Cursor = -1
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
-		return "", err
+		return arg, "", err
 	}
+	req = fmt.Sprintf("browser.find%+v", args)
 	if strings.TrimSpace(args.Pattern) == "" {
-		return errorResponse(fmt.Errorf("pattern argument is required")), nil
+		return req, errorResponse(fmt.Errorf("pattern argument is required")), nil
 	}
 	current, err := t.current(int(args.Cursor))
 	if err != nil {
-		return errorResponse(err), nil
+		return req, errorResponse(err), nil
 	}
 	if m := reFind.FindStringSubmatch(current.Title); len(m) > 0 {
 		// search again in search page
@@ -339,7 +343,7 @@ func (t Find) Call(arg string) (string, error) {
 		doc.StartLine = len(doc.Lines)
 	}
 	t.add(doc)
-	return doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(t.Cursor, t.MaxWords), nil
 }
 
 func errorResponse(err error) string {

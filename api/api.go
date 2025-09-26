@@ -29,7 +29,7 @@ type ToolFunction interface {
 	// function name and argument schema
 	Definition() shared.FunctionDefinitionParam
 	// call with args in JSON format - if err is set it is treated as fatal, else the model can retry with new args
-	Call(args string) (string, error)
+	Call(args string) (req, resp string, err error)
 }
 
 // Tool parameters for given list of tools
@@ -123,16 +123,16 @@ func ChatCompletion(ctx context.Context, client openai.Client, req openai.ChatCo
 		}
 		fn := call.Function
 		start = time.Now()
-		toolResponse, err := callTool(fn.Name, fn.Arguments, tools)
+		toolReq, toolResp, err := callTool(fn.Name, fn.Arguments, tools)
 		stats.toolCalled(fn.Name, start)
 		if err != nil {
 			return "", stats, err
 		}
-		callback("tool", toolResponse+"\n", 0, false)
+		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
 		// add call and response to request and resend
 		req.Messages = append(req.Messages,
 			functionCallMessage(reasoning, call.ID, fn.Name, fn.Arguments),
-			openai.ToolMessage(toolResponse, call.ID),
+			openai.ToolMessage(toolResp, call.ID),
 		)
 	}
 }
@@ -178,15 +178,15 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, req openai.
 		// have tool call - call function
 		retry = 0
 		start = time.Now()
-		toolResponse, err := callTool(call.Name, call.Arguments, tools)
+		toolReq, toolResp, err := callTool(call.Name, call.Arguments, tools)
 		stats.toolCalled(call.Name, start)
 		if err != nil {
 			return "", stats, err
 		}
-		callback("tool", toolResponse+"\n", 0, false)
+		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
 		req.Messages = append(req.Messages,
 			functionCallMessage(acc.Reasoning, call.ID, call.Name, call.Arguments),
-			openai.ToolMessage(toolResponse, call.ID),
+			openai.ToolMessage(toolResp, call.ID),
 		)
 	}
 }
@@ -271,13 +271,13 @@ func getError(rawJSON string) error {
 	return fmt.Errorf("error %d: %s", v.Code, v.Message)
 }
 
-func callTool(name, args string, tools []ToolFunction) (string, error) {
+func callTool(name, args string, tools []ToolFunction) (req, res string, err error) {
 	for _, tool := range tools {
 		if tool.Definition().Name == name {
 			return tool.Call(args)
 		}
 	}
-	return "", fmt.Errorf("ChatCompletion: tool function %q not defined", name)
+	return "", "", fmt.Errorf("ChatCompletion: tool function %q not defined", name)
 }
 
 func functionCallMessage(reasoning, callID, functionName, arguments string) openai.ChatCompletionMessageParamUnion {

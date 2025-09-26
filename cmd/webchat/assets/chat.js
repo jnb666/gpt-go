@@ -107,12 +107,13 @@ function duration(ms) {
 }
 
 function updateStats(stats) {
-	console.log("stats:", stats);
 	const tokensPerSec = 1000 * stats.completion_tokens / stats.api_time;
 	document.getElementById("model-name").textContent = stats.model;
 	document.getElementById("stats-calls").textContent = `${stats.api_calls} API calls in ${duration(stats.api_time)}`;
 	if (stats.tool_calls) {
 		document.getElementById("stats-tools").textContent = `${stats.tool_calls} tool calls in ${duration(stats.tool_time)}`;
+	} else {
+		document.getElementById("stats-tools").textContent = "";
 	}
 	document.getElementById("stats-tokens").textContent = `${stats.prompt_tokens}+${stats.completion_tokens} tokens`;
 	document.getElementById("stats-speed").textContent = `${tokensPerSec.toFixed(1)} tok/sec`;
