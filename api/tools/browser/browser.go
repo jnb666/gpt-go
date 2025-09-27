@@ -268,9 +268,7 @@ func (t Open) Call(arg string) (req, res string, err error) {
 func (t Open) scrape(url, title, referer string) (doc markdown.Document, err error) {
 	doc.URL = url
 	doc.Title = title
-	opts := scrape.DefaultOptions
-	opts.Referer = referer
-	resp, err := t.scaper.Scrape(url, opts)
+	resp, err := t.scaper.Scrape(url, func(opt *scrape.Options) { opt.Referer = referer })
 	if err != nil {
 		return doc, err
 	}

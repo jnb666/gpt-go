@@ -33,6 +33,24 @@ func TestOpenWikipedia(t *testing.T) {
 	printLinks(t, browser, 10)
 }
 
+func TestOpenReddit(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.reddit.com/r/programming/comments/1nm2u3h/vibe_coding_is_creating_braindead_coders/"}))
+	t.Logf("response:\n%s", resp)
+	printLinks(t, browser, 10)
+}
+
+func TestOpenYahoo(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	open := Open{Browser: browser, MaxWords: MaxWords}
+	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.yahoo.com/entertainment/"}))
+	t.Logf("response:\n%s", resp)
+	printLinks(t, browser, 10)
+}
+
 func TestNotFound(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()

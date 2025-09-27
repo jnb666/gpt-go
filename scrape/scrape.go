@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"net/url"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -21,28 +24,48 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	DefaultOptions = Options{
-		Timeout:           15 * time.Second,
-		MaxAge:            8 * time.Hour,
-		MaxSpeed:          time.Second,
-		WaitUntil:         playwright.WaitUntilStateLoad,
-		Locale:            "en-GB",
-		Timezone:          "Europe/London",
-		IgnoreHttpsErrors: true,
-	}
-)
-
 type Options struct {
 	Timeout           time.Duration // Timeout for each goto request
 	MaxAge            time.Duration // Used cached response if age of request less than this
 	MaxSpeed          time.Duration // Minimum delay between requests from same host
 	CloseWait         time.Duration // Wait before closing context
-	WaitUntil         *playwright.WaitUntilState
+	WaitFor           time.Duration // Wait after load has completed
+	WaitUntil         playwright.WaitUntilState
 	Referer           string
 	Locale            string
 	Timezone          string
 	IgnoreHttpsErrors bool
+	Headless          bool
+	WithExtension     string
+}
+
+func DefaultOptions(uri string) Options {
+	opts := Options{
+		Timeout:           15 * time.Second,
+		MaxAge:            8 * time.Hour,
+		MaxSpeed:          time.Second,
+		WaitUntil:         *playwright.WaitUntilStateLoad,
+		Locale:            "en-GB",
+		Timezone:          "Europe/London",
+		IgnoreHttpsErrors: true,
+		Headless:          true,
+	}
+	if uri != "" {
+		host := getHost(uri)
+		for _, domain := range cookieAddonDomains {
+			if host == domain || strings.HasSuffix(host, "."+domain) {
+				opts.WithExtension = "isdcac"
+				opts.WaitFor = cookieWaitDefault
+			}
+		}
+		for _, domain := range waitDomains {
+			if host == domain || strings.HasSuffix(host, "."+domain) {
+				opts.WaitFor = waitDefault
+			}
+		}
+	}
+
+	return opts
 }
 
 // Browser instance
@@ -52,27 +75,32 @@ type Browser struct {
 	cache      map[string]Response
 }
 
-// Load new firefox browser in headless mode by default, will panic on error
-func NewBrowser(headless ...bool) Browser {
+// Load new firefox browser. If withOptions is set it can be used to override DefaultOptions. Will panic on error.
+func NewBrowser(withOptions ...func(*Options)) Browser {
 	log.Info("scrape: new browser")
-	pw, err := playwright.Run()
+	var err error
+	opt := DefaultOptions("")
+	b := Browser{cache: map[string]Response{}}
+	if len(withOptions) > 0 && withOptions[0] != nil {
+		withOptions[0](&opt)
+	}
+	b.playwright, err = playwright.Run()
 	if err != nil {
 		panic(err)
 	}
-	if len(headless) == 0 {
-		headless = []bool{true}
-	}
-	br, err := pw.Firefox.Launch(playwright.BrowserTypeLaunchOptions{Headless: &headless[0]})
+	b.browser, err = b.playwright.Firefox.Launch(playwright.BrowserTypeLaunchOptions{Headless: &opt.Headless})
 	if err != nil {
 		panic(err)
 	}
-	return Browser{playwright: pw, browser: br, cache: map[string]Response{}}
+	return b
 }
 
 // Close browser and stop playwright
 func (b Browser) Shutdown() {
 	log.Info("scrape: shutdown browser")
-	b.browser.Close()
+	if b.browser != nil {
+		b.browser.Close()
+	}
 	b.playwright.Stop()
 }
 
@@ -87,12 +115,13 @@ type Response struct {
 	Timestamp  time.Time
 }
 
-// Scrape HTML content from given URL and convert to Markdown. referer is optional. Uses DefaultOptions if opts not specified.
-func (b Browser) Scrape(uri string, opts ...Options) (r Response, err error) {
-	opt := DefaultOptions
-	if len(opts) > 0 {
-		opt = opts[0]
+// Scrape HTML content from given URL and convert to Markdown. referer is optional. If withOptions is specified it can be used to override the default options.
+func (b Browser) Scrape(uri string, withOptions ...func(*Options)) (r Response, err error) {
+	opt := DefaultOptions(uri)
+	if len(withOptions) > 0 && withOptions[0] != nil {
+		withOptions[0](&opt)
 	}
+	log.Debugf("scrape options: %+v", opt)
 	if r, ok := b.cache[uri]; ok && r.Status == 200 && time.Since(r.Timestamp) < opt.MaxAge {
 		log.Debugf("scrape: get %s from cache", uri)
 		return r, nil
@@ -118,12 +147,42 @@ func (b Browser) Scrape(uri string, opts ...Options) (r Response, err error) {
 }
 
 func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
-	ctx, err := b.browser.NewContext(playwright.BrowserNewContextOptions{
-		IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
-		Locale:            &opt.Locale,
-		TimezoneId:        &opt.Timezone,
-		Viewport:          &playwright.Size{Width: 1280 + rand.IntN(400), Height: 720 + rand.IntN(200)},
-	})
+	var ctx playwright.BrowserContext
+	viewport := playwright.Size{Width: 1280 + rand.IntN(400), Height: 720 + rand.IntN(200)}
+	if opt.WithExtension == "" {
+		ctx, err = b.browser.NewContext(
+			playwright.BrowserNewContextOptions{
+				IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
+				Locale:            &opt.Locale,
+				TimezoneId:        &opt.Timezone,
+				Viewport:          &viewport,
+			})
+	} else {
+		channel := "chromium"
+		userDataDir, err := os.MkdirTemp("", "chromium_user_data")
+		if err != nil {
+			return r, err
+		}
+		defer os.RemoveAll(userDataDir)
+		extension := opt.WithExtension
+		if !filepath.IsAbs(extension) {
+			extension = filepath.Join(extensionDir(), extension)
+		}
+		log.Debug("loading extension from ", extension)
+		ctx, err = b.playwright.Chromium.LaunchPersistentContext(userDataDir,
+			playwright.BrowserTypeLaunchPersistentContextOptions{
+				Headless:          &opt.Headless,
+				Channel:           &channel,
+				Args:              []string{"--disable-extensions-except=" + extension, "--load-extension=" + extension},
+				IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
+				Locale:            &opt.Locale,
+				TimezoneId:        &opt.Timezone,
+				Viewport:          &viewport,
+			})
+	}
+	if err != nil {
+		return r, err
+	}
 	defer func() {
 		time.Sleep(opt.CloseWait)
 		ctx.Close()
@@ -153,7 +212,7 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 		r.Continue()
 	})
 
-	gotoOpts := playwright.PageGotoOptions{WaitUntil: opt.WaitUntil}
+	gotoOpts := playwright.PageGotoOptions{WaitUntil: &opt.WaitUntil}
 	if opt.Timeout > 0 {
 		timeout := float64(opt.Timeout.Milliseconds())
 		gotoOpts.Timeout = &timeout
@@ -165,12 +224,21 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 	if err != nil {
 		return r, err
 	}
-	r.URL = uri
-	r.Timestamp = time.Now()
-	r.RawHTML, err = page.Content()
+	for n := 0; n < maxRetries; n++ {
+		if opt.WaitFor > 0 {
+			page.WaitForTimeout(float64(opt.WaitFor.Milliseconds()))
+		}
+		r.RawHTML, err = page.Content()
+		if err == nil || opt.WaitFor == 0 {
+			break
+		}
+		log.Warn(err)
+	}
 	if err != nil {
 		return r, err
 	}
+	r.URL = uri
+	r.Timestamp = time.Now()
 	r.Status = resp.Status()
 	if text, ok := statusCodes[r.Status]; ok {
 		r.StatusText = text
@@ -240,4 +308,9 @@ func getHost(uri string) string {
 		return ""
 	}
 	return strings.TrimPrefix(u.Hostname(), "www.")
+}
+
+func extensionDir() string {
+	_, filename, _, _ := runtime.Caller(0)
+	return filepath.Join(filepath.Dir(filename), "extensions")
 }

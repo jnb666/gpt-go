@@ -11,39 +11,54 @@ func init() {
 	log.SetLevel(log.DebugLevel)
 }
 
+func scrape(t *testing.T, b Browser, url string, withOptions ...func(*Options)) {
+	t.Log("scraping", url)
+	r, err := b.Scrape(url, withOptions...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != 200 {
+		t.Error("expecting 200 status")
+	}
+	t.Logf("status: %d %s", r.Status, r.StatusText)
+	t.Logf("title: %q", r.Title)
+	if log.GetLevel() >= log.DebugLevel {
+		t.Logf("content:\n%s\n", r.Markdown)
+	}
+}
+
 func TestScrape(t *testing.T) {
+	b := NewBrowser()
+	defer b.Shutdown()
 	urls := []string{
 		"https://ollama.com/",
 		"https://itsabanana.dev/",
 		"https://www.theguardian.com/about",
 		"https://ollama.com/",
-		"https://www.reuters.com/",
-		"https://www.reuters.com/world/uk/",
 	}
-	referers := map[string]string{
-		"https://www.reuters.com/world/uk/": "https://www.reuters.com/",
+	for _, url := range urls {
+		scrape(t, b, url)
 	}
+}
 
+func TestReuters(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()
-	opts := DefaultOptions
+	scrape(t, b, "https://www.reuters.com/")
+	scrape(t, b, "https://www.reuters.com/world/uk/",
+		func(opt *Options) { opt.Referer = "https://www.reuters.com/" })
+}
 
-	for _, url := range urls {
-		t.Log("scraping", url)
-		opts.Referer = referers[url]
-		r, err := b.Scrape(url, opts)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if r.Status != 200 {
-			t.Error("expecting 200 status")
-		}
-		t.Logf("status: %d %s", r.Status, r.StatusText)
-		t.Logf("title: %q", r.Title)
-		if log.GetLevel() >= log.DebugLevel {
-			t.Logf("content:\n%s\n", r.Markdown)
-		}
-	}
+func TestReddit(t *testing.T) {
+	b := NewBrowser()
+	defer b.Shutdown()
+	scrape(t, b, "https://www.reddit.com/r/LocalLLaMA/comments/1mke7ef/120b_runs_awesome_on_just_8gb_vram/")
+}
+
+func TestYahoo(t *testing.T) {
+	b := NewBrowser()
+	defer b.Shutdown()
+	scrape(t, b, "https://www.yahoo.com/entertainment/")
 }
 
 func TestInvalidHost(t *testing.T) {
@@ -72,9 +87,10 @@ func TestNotFound(t *testing.T) {
 }
 
 func TestAntibot(t *testing.T) {
-	b := NewBrowser(false)
+	b := NewBrowser(func(opt *Options) {
+		opt.Headless = false
+		opt.CloseWait = time.Minute
+	})
 	defer b.Shutdown()
-	opts := DefaultOptions
-	opts.CloseWait = 5 * time.Minute
-	b.Scrape("https://bot.sannysoft.com/", opts)
+	b.Scrape("https://bot.sannysoft.com/")
 }

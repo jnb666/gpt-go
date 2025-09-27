@@ -1,9 +1,26 @@
 package scrape
 
-import _ "embed"
+import (
+	_ "embed"
+	"time"
+)
+
+const (
+	waitDefault       = time.Second
+	cookieWaitDefault = 3 * time.Second
+	maxRetries        = 3
+)
 
 //go:embed stealth.js
 var stealthJS string
+
+var waitDomains = []string{
+	"reddit.com",
+}
+
+var cookieAddonDomains = []string{
+	"yahoo.com",
+}
 
 var mediaExtensions = []string{
 	"png", "jpg", "jpeg", "gif", "svg", "mp3", "mp4", "avi", "flac", "ogg", "wav", "webm", "webp",
