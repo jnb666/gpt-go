@@ -2,7 +2,6 @@
 package scrape
 
 import (
-	"errors"
 	"fmt"
 	"math/rand/v2"
 	"net/url"
@@ -132,10 +131,6 @@ func (b Browser) Scrape(uri string, withOptions ...func(*Options)) (r Response, 
 	}
 	r, err = b.scrape(uri, opt)
 	if err != nil {
-		e := new(playwright.Error)
-		if errors.As(err, &e) {
-			return r, fmt.Errorf("error getting page: %s", e.Message)
-		}
 		return r, err
 	}
 	r, err = toMarkdown(r)
@@ -181,7 +176,7 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 			})
 	}
 	if err != nil {
-		return r, err
+		return r, fmt.Errorf("new browser context error: %w", err)
 	}
 	defer func() {
 		time.Sleep(opt.CloseWait)
@@ -190,7 +185,7 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 
 	page, err := ctx.NewPage()
 	if err != nil {
-		return r, err
+		return r, fmt.Errorf("new page error: %w", err)
 	}
 	page.AddInitScript(playwright.Script{Content: &stealthJS})
 
@@ -222,7 +217,7 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 	}
 	resp, err := page.Goto(uri, gotoOpts)
 	if err != nil {
-		return r, err
+		return r, fmt.Errorf("page goto error: %w", err)
 	}
 	r.Timestamp = time.Now()
 	r.URL = uri
@@ -233,6 +228,9 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 		r.StatusText = "OK"
 	}
 	r.RawHTML, r.Title, err = getContent(page, opt)
+	if err != nil {
+		err = fmt.Errorf("get page content error: %w", err)
+	}
 	return r, err
 }
 
@@ -250,11 +248,7 @@ func getContent(page playwright.Page, opt Options) (content, title string, err e
 	if err != nil {
 		return
 	}
-	_, err = page.AddScriptTag(playwright.PageAddScriptTagOptions{Content: &removeHiddenJS})
-	if err != nil {
-		return
-	}
-	if removed, err := page.Evaluate("removeHiddenElements"); err == nil {
+	if removed, err := page.Evaluate(removeHiddenJS); err == nil {
 		content = removed.(string)
 	} else {
 		log.Warn(err)
@@ -307,6 +301,7 @@ func toMarkdown(r Response) (Response, error) {
 			table.NewTablePlugin(),
 		),
 	)
+	html = strings.ReplaceAll(html, "\u00a0", " ") // &nbsp; elements
 	r.Markdown, err = conv.ConvertString(html, converter.WithDomain(r.URL))
 	r.Markdown = reStrip.ReplaceAllLiteralString(r.Markdown, "")
 	return r, err

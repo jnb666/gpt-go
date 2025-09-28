@@ -4,7 +4,7 @@ After=multi-user.target
 
 [Service]
 Type=simple
-ExecStart=/home/john/go/bin/webchat
+ExecStart=/home/john/go/bin/webchat -nostream -openrouter
 EnvironmentFile=/home/john/gpt-go/.env
 User=john
 Group=john

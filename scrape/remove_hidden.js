@@ -1,18 +1,13 @@
-
-function removeHidden(root) {
-	for (const el of root.getElementsByTagName("*")) {
-	    const style = window.getComputedStyle(el);
-    	if ((style.display === "none") || (style.visibility === "hidden")) {
-    		const name = el.tagName;
-    		el.remove();
-    		return true;
-    	}
-	}
-	return false;
+const root = document.body;
+var found = true;
+while (found) {
+    found = false;
+    for (const el of root.getElementsByTagName("*")) {
+        if (el.offsetWidth === 0 && el.offsetHeight === 0) {
+            el.remove();
+            found = true;
+            break;
+        }
+    }
 }
-
-function removeHiddenElements() {
-	const root = document.body;
-	while (removeHidden(root)) {}
-	return root.getHTML()
-}
+root.getHTML();

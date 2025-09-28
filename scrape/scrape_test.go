@@ -55,6 +55,12 @@ func TestReddit(t *testing.T) {
 	scrape(t, b, "https://www.reddit.com/r/LocalLLaMA/comments/1mke7ef/120b_runs_awesome_on_just_8gb_vram/")
 }
 
+func TestGithub(t *testing.T) {
+	b := NewBrowser()
+	defer b.Shutdown()
+	scrape(t, b, "https://github.com/jkup/awesome-personal-blogs")
+}
+
 func TestYahoo(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()
