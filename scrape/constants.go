@@ -14,6 +14,9 @@ const (
 //go:embed stealth.js
 var stealthJS string
 
+//go:embed remove_hidden.js
+var removeHiddenJS string
+
 var waitDomains = []string{
 	"reddit.com",
 }
@@ -73,6 +76,7 @@ var tagsToRemove = []string{
 	"#widget",
 	".cookie",
 	"#cookie",
+	"rpl-modal-card",
 }
 
 var tagsToKeep = []string{

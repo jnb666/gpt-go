@@ -61,6 +61,12 @@ func TestYahoo(t *testing.T) {
 	scrape(t, b, "https://www.yahoo.com/entertainment/")
 }
 
+func TestRottenTomatoes(t *testing.T) {
+	b := NewBrowser()
+	defer b.Shutdown()
+	scrape(t, b, "https://www.rottentomatoes.com/m/one_battle_after_another")
+}
+
 func TestInvalidHost(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()

@@ -224,32 +224,43 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 	if err != nil {
 		return r, err
 	}
-	for n := 0; n < maxRetries; n++ {
-		if opt.WaitFor > 0 {
-			page.WaitForTimeout(float64(opt.WaitFor.Milliseconds()))
-		}
-		r.RawHTML, err = page.Content()
-		if err == nil || opt.WaitFor == 0 {
-			break
-		}
-		log.Warn(err)
-	}
-	if err != nil {
-		return r, err
-	}
-	r.URL = uri
 	r.Timestamp = time.Now()
+	r.URL = uri
 	r.Status = resp.Status()
 	if text, ok := statusCodes[r.Status]; ok {
 		r.StatusText = text
 	} else if resp.Ok() {
 		r.StatusText = "OK"
 	}
-	if resp.StatusText() != "" {
-		r.StatusText = resp.StatusText()
-	}
-	r.Title, err = page.Title()
+	r.RawHTML, r.Title, err = getContent(page, opt)
 	return r, err
+}
+
+func getContent(page playwright.Page, opt Options) (content, title string, err error) {
+	for n := 0; n < maxRetries; n++ {
+		if opt.WaitFor > 0 {
+			page.WaitForTimeout(float64(opt.WaitFor.Milliseconds()))
+		}
+		content, err = page.Content()
+		if err == nil || opt.WaitFor == 0 {
+			break
+		}
+		log.Warn(err)
+	}
+	if err != nil {
+		return
+	}
+	_, err = page.AddScriptTag(playwright.PageAddScriptTagOptions{Content: &removeHiddenJS})
+	if err != nil {
+		return
+	}
+	if removed, err := page.Evaluate("removeHiddenElements"); err == nil {
+		content = removed.(string)
+	} else {
+		log.Warn(err)
+	}
+	title, err = page.Title()
+	return
 }
 
 func (b Browser) delay(uri string, maxSpeed time.Duration) {
