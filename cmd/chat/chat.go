@@ -25,7 +25,11 @@ func main() {
 	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
 	flag.Parse()
 
-	baseURL, modelName := api.DefaultModel(openrouter)
+	server := api.LlamaCpp
+	if openrouter {
+		server = api.OpenRouter
+	}
+	baseURL, modelName := api.DefaultModel(server)
 	log.Infof("connecting to %s %s", baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
@@ -35,9 +39,6 @@ func main() {
 	}
 	if systemPrompt != "" {
 		req.Messages = append(req.Messages, openai.SystemMessage(systemPrompt))
-	}
-	if api.Debug {
-		api.Pprint(req)
 	}
 
 	input := bufio.NewReader(os.Stdin)
@@ -53,9 +54,9 @@ func main() {
 		var message string
 		var stats api.Stats
 		if nostream {
-			message, stats, err = api.ChatCompletion(ctx, client, req, printOutput)
+			message, stats, err = api.ChatCompletion(ctx, client, req, server, printOutput, nil)
 		} else {
-			message, stats, err = api.ChatCompletionStream(ctx, client, req, printOutput)
+			message, stats, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, nil)
 		}
 		fmt.Println()
 		stats.Loginfo()

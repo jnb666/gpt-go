@@ -2,14 +2,20 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/openai/openai-go/v2"
 	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v2/packages/param"
 	"github.com/openai/openai-go/v2/shared"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/pretty"
@@ -23,6 +29,13 @@ var (
 func init() {
 	pretty.DefaultOptions.Width = 120
 }
+
+const (
+	LlamaCpp   Server = 0
+	OpenRouter Server = 1
+)
+
+type Server int
 
 // Interface implented by tools which can be called by the model.
 type ToolFunction interface {
@@ -42,12 +55,13 @@ func ChatCompletionToolParams(tools []ToolFunction) (params []openai.ChatComplet
 }
 
 // Default model settings
-func DefaultModel(openrouter bool) (baseURL, modelName string) {
-	if openrouter {
+func DefaultModel(server Server) (baseURL, modelName string) {
+	switch server {
+	case LlamaCpp:
+		baseURL = "http://deepthought:8080/v1"
+	case OpenRouter:
 		baseURL = "https://openrouter.ai/api/v1"
 		modelName = "@preset/gpt-oss-120"
-	} else {
-		baseURL = "http://deepthought:8080/v1"
 	}
 	return
 }
@@ -70,32 +84,31 @@ type CallbackFunc func(channel, content string, index int, end bool)
 
 // Chat completion without streaming with optional function call support. The final assistant response content is returned along with usage and timing stats.
 // callback is called after each stage of generation - i.e. reasoning text, tool response and final response.
-func ChatCompletion(ctx context.Context, client openai.Client, req openai.ChatCompletionNewParams, callback CallbackFunc,
+func ChatCompletion(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, server Server, callback CallbackFunc, statsCallback func(Stats),
 	tools ...ToolFunction) (message string, stats Stats, err error) {
 
-	if Debug {
-		Pprint(req.Messages)
-	}
 	stats = newStats()
-	retry := 0
-	maxRetries := 3
+	req := request
+	req.Messages = slices.Clone(request.Messages)
+	var content, reasoning string
 	for {
 		// submit request
+		opts := requestOptions(req, server, reasoning)
 		start := time.Now()
-		resp, err := client.Chat.Completions.New(ctx, req, newOptions(req))
+		resp, err := client.Chat.Completions.New(ctx, req, opts...)
 		if err != nil {
 			return "", stats, err
 		}
 		stats.update(resp.Model, resp.Usage, start)
-		if Debug {
-			Pprint(resp.RawJSON())
+		if statsCallback != nil {
+			statsCallback(stats)
 		}
 		if len(resp.Choices) == 0 {
 			return "", stats, getError(resp.RawJSON())
 		}
 		// parse response
 		choice := resp.Choices[0]
-		content, reasoning := GetContent(choice.Message.RawJSON())
+		content, reasoning = GetContent(choice.Message.RawJSON())
 		if reasoning != "" {
 			callback("analysis", reasoning+"\n", 0, false)
 		}
@@ -103,20 +116,10 @@ func ChatCompletion(ctx context.Context, client openai.Client, req openai.ChatCo
 			callback("final", content+"\n", 0, true)
 			return content, stats, nil
 		}
-		if len(choice.Message.ToolCalls) == 0 && retry < maxRetries {
-			// retry with current reasoning content if tool call is expected but missing
-			if reasoning != "" {
-				req.Messages = append(req.Messages, openai.AssistantMessage(reasoning))
-			}
-			retry++
-			log.Infof("ChatCompletion: retry %d/%d", retry, maxRetries)
-			continue
-		}
 		if len(choice.Message.ToolCalls) == 0 {
 			return "", stats, fmt.Errorf("ChatCompletion: stop with empty response")
 		}
 		// have tool call - call function
-		retry = 0
 		call := choice.Message.ToolCalls[0]
 		if call.Type != "function" {
 			return "", stats, fmt.Errorf("ChatCompletion: %q tool call type not supported", call.Type)
@@ -131,26 +134,23 @@ func ChatCompletion(ctx context.Context, client openai.Client, req openai.ChatCo
 		}
 		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
 		// add call and response to request and resend
-		req.Messages = append(req.Messages,
-			functionCallMessage(reasoning, call.ID, fn.Name, fn.Arguments),
-			openai.ToolMessage(toolResp, call.ID),
-		)
+		req.Messages = append(req.Messages, choice.Message.ToParam(), openai.ToolMessage(toolResp, call.ID))
 	}
 }
 
 // As per ChatCompletion but will stream responses as they are generated generated
-func ChatCompletionStream(ctx context.Context, client openai.Client, req openai.ChatCompletionNewParams, callback CallbackFunc,
+func ChatCompletionStream(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, server Server, callback CallbackFunc, statsCallback func(Stats),
 	tools ...ToolFunction) (message string, stats Stats, err error) {
 
-	if Debug {
-		Pprint(req.Messages)
-	}
 	stats = newStats()
-	retry := 0
-	maxRetries := 3
+	req := request
+	req.Messages = slices.Clone(request.Messages)
+	req.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
+	var acc Accumulator
 	for {
+		opts := requestOptions(req, server, acc.Reasoning)
 		start := time.Now()
-		acc, err := chatCompletionStream(ctx, client, req, callback)
+		acc, err = chatCompletionStream(ctx, client, req, opts, callback)
 		if err != nil {
 			return "", stats, err
 		}
@@ -158,26 +158,19 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, req openai.
 		if len(acc.Choices) == 0 {
 			return "", stats, getError(acc.RawJSON())
 		}
+		if statsCallback != nil {
+			statsCallback(stats)
+		}
 		call, haveToolCall := acc.JustFinishedToolCall()
 		if !haveToolCall && acc.Content != "" {
 			callback("final", "\n", acc.index, false)
 			callback("final", acc.Content+"\n", acc.index+1, true)
 			return acc.Content, stats, nil
 		}
-		if !haveToolCall && retry < maxRetries {
-			// retry with current reasoning content if tool call is expected but missing
-			if acc.Reasoning != "" {
-				req.Messages = append(req.Messages, openai.AssistantMessage(acc.Reasoning))
-			}
-			retry++
-			log.Infof("ChatCompletion: retry %d/%d", retry, maxRetries)
-			continue
-		}
 		if !haveToolCall {
 			return "", stats, fmt.Errorf("ChatCompletion: stop with empty response")
 		}
 		// have tool call - call function
-		retry = 0
 		start = time.Now()
 		toolReq, toolResp, err := callTool(call.Name, call.Arguments, tools)
 		stats.toolCalled(call.Name, start)
@@ -186,14 +179,12 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, req openai.
 			log.Error(toolResp)
 		}
 		callback("tool", toolReq+"\n"+toolResp+"\n", 0, false)
-		req.Messages = append(req.Messages,
-			functionCallMessage(acc.Reasoning, call.ID, call.Name, call.Arguments),
-			openai.ToolMessage(toolResp, call.ID),
-		)
+		// add call and response to request and resend
+		req.Messages = append(req.Messages, acc.Choices[0].Message.ToParam(), openai.ToolMessage(toolResp, call.ID))
 	}
 }
 
-type accumulator struct {
+type Accumulator struct {
 	openai.ChatCompletionAccumulator
 	Content   string
 	Reasoning string
@@ -201,17 +192,13 @@ type accumulator struct {
 }
 
 // send streaming request and accumulate response
-func chatCompletionStream(ctx context.Context, client openai.Client, req openai.ChatCompletionNewParams, callback CallbackFunc) (
-	acc accumulator, err error) {
+func chatCompletionStream(ctx context.Context, client openai.Client, req openai.ChatCompletionNewParams, opts []option.RequestOption, callback CallbackFunc) (
+	acc Accumulator, err error) {
 
-	stream := client.Chat.Completions.NewStreaming(ctx, req, newOptions(req))
+	stream := client.Chat.Completions.NewStreaming(ctx, req, opts...)
 	channel := "analysis"
 	for stream.Next() {
 		chunk := stream.Current()
-		if Debug {
-			Pprint(chunk)
-		}
-
 		acc.AddChunk(chunk)
 		if _, ok := acc.JustFinishedToolCall(); ok {
 			if acc.index > 0 {
@@ -244,25 +231,50 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 	return acc, stream.Err()
 }
 
-// llama.cpp comparibility
-func newOptions(req openai.ChatCompletionNewParams) option.RequestOption {
-	kwargs := map[string]any{"reasoning_effort": req.ReasoningEffort}
-	return option.WithJSONSet("chat_template_kwargs", kwargs)
-}
-
-// Pretty print JSON data if given string, or struct if given any other type
-func Pprint(value any) {
-	var data []byte
-	if jsdata, ok := value.(string); ok {
-		data = []byte(jsdata)
-	} else {
-		data, _ = json.Marshal(value)
+// extra JSON fields to set in request
+func requestOptions(req openai.ChatCompletionNewParams, server Server, reasoning string) (opts []option.RequestOption) {
+	if reasoning != "" && len(req.Messages) > 2 {
+		ix := len(req.Messages) - 2
+		lastCall := req.Messages[ix]
+		if lastCall.OfAssistant != nil && param.IsOmitted(lastCall.OfAssistant.Content) {
+			switch server {
+			case LlamaCpp:
+				opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(ix)+".thinking", reasoning))
+			case OpenRouter:
+				opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(ix)+".reasoning", reasoning))
+			}
+		}
 	}
-	data = pretty.Color(pretty.Pretty(data), nil)
-	fmt.Fprintln(DebugTo, string(data))
+	if server == LlamaCpp && req.ReasoningEffort != "" {
+		opts = append(opts, option.WithJSONSet("chat_template_kwargs", map[string]any{"reasoning_effort": req.ReasoningEffort}))
+	}
+	if Debug {
+		opts = append(opts, option.WithMiddleware(debugLogger))
+	}
+	return opts
 }
 
 // utilities
+func debugLogger(req *http.Request, nxt option.MiddlewareNext) (*http.Response, error) {
+	req.Body = pprint("request", req.Body)
+	resp, err := nxt(req)
+	if err != nil {
+		return resp, err
+	}
+	resp.Body = pprint("response", resp.Body)
+	return resp, nil
+}
+
+func pprint(title string, body io.ReadCloser) io.ReadCloser {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		log.Error(err)
+	}
+	formatted := pretty.Color(pretty.Pretty(data), nil)
+	fmt.Fprintf(DebugTo, "== %s ==\n%s\n", title, formatted)
+	return io.NopCloser(bytes.NewBuffer(data))
+}
+
 func getError(rawJSON string) error {
 	type errorResponse struct {
 		Code    int
@@ -280,12 +292,4 @@ func callTool(name, args string, tools []ToolFunction) (req, res string, err err
 		}
 	}
 	return "", "", fmt.Errorf("ChatCompletion: tool function %q not defined", name)
-}
-
-func functionCallMessage(reasoning, callID, functionName, arguments string) openai.ChatCompletionMessageParamUnion {
-	msg := openai.AssistantMessage(reasoning) //"<|channel|>analysis<|message|>" + reasoning)
-	var p openai.ChatCompletionMessageFunctionToolCallParam
-	p.ID, p.Function.Name, p.Function.Arguments = callID, functionName, arguments
-	msg.OfAssistant.ToolCalls = []openai.ChatCompletionMessageToolCallUnionParam{{OfFunction: &p}}
-	return msg
 }

@@ -32,8 +32,11 @@ func main() {
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
-
-	baseURL, modelName := api.DefaultModel(openrouter)
+	server := api.LlamaCpp
+	if openrouter {
+		server = api.OpenRouter
+	}
+	baseURL, modelName := api.DefaultModel(server)
 	log.Infof("connecting to %s %s", baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
@@ -44,9 +47,6 @@ func main() {
 	req := openai.ChatCompletionNewParams{
 		Model: modelName,
 		Tools: api.ChatCompletionToolParams(tools),
-	}
-	if api.Debug {
-		api.Pprint(req)
 	}
 
 	input := bufio.NewReader(os.Stdin)
@@ -65,9 +65,9 @@ func main() {
 		var message string
 		var stats api.Stats
 		if nostream {
-			message, stats, err = api.ChatCompletion(ctx, client, req, printOutput, tools...)
+			message, stats, err = api.ChatCompletion(ctx, client, req, server, printOutput, nil, tools...)
 		} else {
-			message, stats, err = api.ChatCompletionStream(ctx, client, req, printOutput, tools...)
+			message, stats, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, nil, tools...)
 		}
 		fmt.Println()
 		stats.Loginfo()

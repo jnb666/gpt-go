@@ -37,10 +37,12 @@ var assets embed.FS
 
 var upgrader websocket.Upgrader
 
-var debug, nostream, openrouter bool
+var debug, nostream bool
+var apiServer = api.LlamaCpp
 
 func main() {
 	var server http.Server
+	var openrouter bool
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
@@ -51,6 +53,9 @@ func main() {
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	if debug {
 		log.SetLevel(log.DebugLevel)
+	}
+	if openrouter {
+		apiServer = api.OpenRouter
 	}
 
 	http.Handle("/", fsHandler())
@@ -89,7 +94,6 @@ func main() {
 type Connection struct {
 	conn     *websocket.Conn
 	client   openai.Client
-	stats    api.Stats
 	tools    []api.ToolFunction
 	browser  *browser.Browser
 	python   *python.Python
@@ -113,7 +117,7 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		baseURL, modelName := api.DefaultModel(openrouter)
+		baseURL, modelName := api.DefaultModel(apiServer)
 		log.Infof("connecting to %s %s", baseURL, modelName)
 		c := &Connection{
 			conn:   conn,
@@ -230,13 +234,11 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 
 	var err error
 	ctx := context.Background()
-	c.stats = api.Stats{}
 	if nostream {
-		_, c.stats, err = api.ChatCompletion(ctx, c.client, req, c.sendUpdate, c.tools...)
+		_, _, err = api.ChatCompletion(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
 	} else {
-		_, c.stats, err = api.ChatCompletionStream(ctx, c.client, req, c.sendUpdate, c.tools...)
+		_, _, err = api.ChatCompletionStream(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
 	}
-	c.stats.Loginfo()
 	if err != nil {
 		return conv, err
 	}
@@ -255,9 +257,17 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 	return conv, err
 }
 
+// update stats after each complete request
+func (c *Connection) updateStats(stats api.Stats) {
+	stats.Loginfo()
+	if err := c.conn.WriteJSON(api.Response{Action: "stats", Stats: stats}); err != nil {
+		log.Error(err)
+	}
+}
+
 // chat completion stream callback to send updates to front end
 func (c *Connection) sendUpdate(channel, text string, index int, end bool) {
-	r := api.Response{Action: "add", Stats: c.stats}
+	r := api.Response{Action: "add"}
 	switch channel {
 	case "analysis":
 		r.Message.Type = "analysis"

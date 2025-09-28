@@ -117,18 +117,14 @@ func (t Search) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name:   "browser_search",
 		Strict: openai.Bool(true),
-		Description: openai.String("## browser\n\n" +
-			"// Tool for browsing.\n" +
-			"// The `cursor` appears in brackets before each browsing display: `[{cursor}]`.\n" +
-			"// Cite information from the tool using the following format:\n" +
-			"// `【{cursor}†L{line_start}(-L{line_end})?】`, for example: `【6†L9-L11】` or `【8†L3】`.\n" +
-			"\n" +
-			"// Searches the web for information related to `query` and displays `topn` results."),
+		Description: openai.String("Searches the web for information related to `query` and displays `topn` results." +
+			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
+			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string"},
-				"topn":  map[string]any{"type": "number", "default": 10},
+				"query": map[string]any{"type": "string", "description": "Text to search for on the web."},
+				"topn":  map[string]any{"type": "number", "description": "Maximum number of results to return - default 10."},
 			},
 			"required": []string{"query"},
 		},
@@ -206,18 +202,25 @@ func (t Open) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name:   "browser_open",
 		Strict: openai.Bool(true),
-		Description: openai.String("Opens the link `id` from the page indicated by `cursor` starting at line number `loc`.\n" +
-			"// Valid link ids are displayed with the formatting: `【{id}†.*】`.\n" +
-			"// If `cursor` is not provided, the most recent page is implied.\n" +
-			"// If `id` is a string, it is treated as a fully qualified URL.\n" +
-			"// If `loc` is not provided, the viewport will be positioned at the beginning of the document.\n" +
-			"// Use this function without `id` to scroll to a new location of an opened page."),
+		Description: openai.String("Opens the link `id` from the page indicated by `cursor` starting at line number `loc`." +
+			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
+			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"cursor": map[string]any{"type": "number", "default": -1},
-				"id":     map[string]any{"type": []string{"number", "string"}, "default": -1},
-				"loc":    map[string]any{"type": "number", "default": -1},
+				"cursor": map[string]any{
+					"type":        "number",
+					"description": "Identifies the current page. If not provided the most recent page is implied.",
+				},
+				"id": map[string]any{
+					"type": []string{"number", "string"},
+					"description": "If `id` is a number it is treated as a link id from the page given by `cursor`. Valid link ids are displayed with the formatting: `【{id}†.*】.`" +
+						"  If `id` is a string, it is treated as a fully qualified URL." +
+						"  Use this function without `id` to scroll to a new location of an opened page.",
+				},
+				"loc": map[string]any{
+					"type":        "number",
+					"description": "Line number in the document at which to position the viewport - defaults to the start of the documnet if not provided."},
 			},
 		},
 	}
@@ -268,7 +271,7 @@ func (t Open) Call(arg string) (req, res string, err error) {
 func (t Open) scrape(url, title, referer string) (doc markdown.Document, err error) {
 	doc.URL = url
 	doc.Title = title
-	resp, err := t.scaper.Scrape(url, func(opt *scrape.Options) { opt.Referer = referer })
+	resp, err := t.scaper.Scrape(url) //, func(opt *scrape.Options) { opt.Referer = referer })
 	if err != nil {
 		return doc, err
 	}
@@ -289,14 +292,22 @@ type Find struct {
 
 func (t Find) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:        "browser_find",
-		Strict:      openai.Bool(true),
-		Description: openai.String("Finds exact matches of `pattern` in the current page, or the page given by `cursor`."),
+		Name:   "browser_find",
+		Strict: openai.Bool(true),
+		Description: openai.String("Finds exact matches of `pattern` in the current page, or the page given by `cursor`." +
+			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
+			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"pattern": map[string]any{"type": "string"},
-				"cursor":  map[string]any{"type": "number", "default": -1},
+				"cursor": map[string]any{
+					"type":        "number",
+					"description": "Identifies the current page. If not provided the most recent page is implied.",
+				},
+				"pattern": map[string]any{
+					"type":        "string",
+					"description": "Text to search for.",
+				},
 			},
 			"required": []string{"pattern"},
 		},

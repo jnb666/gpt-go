@@ -21,12 +21,12 @@ type Request struct {
 
 // Chat API response from webserver back to frontend
 type Response struct {
-	Action       string       `json:"action"`                // add | list | load | config
+	Action       string       `json:"action"`                // add | list | load | config | stats
 	Message      Message      `json:"message,omitzero"`      // if action=add
 	Conversation Conversation `json:"conversation,omitzero"` // if action=load
 	List         []Item       `json:"list,omitzero"`         // if action=list
 	Config       Config       `json:"config,omitzero"`       // if action=config
-	Stats        Stats        `json:"stats,omitzero"`        // if action=add
+	Stats        Stats        `json:"stats,omitzero"`        // if action=stats
 }
 
 type Conversation struct {

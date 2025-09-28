@@ -31,15 +31,14 @@ func (t Current) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name:   "get_current_weather",
 		Strict: openai.Bool(true),
-		Description: openai.String("Get the current weather in a given location.\n" +
-			"// Returns conditions with temperatures in Celsius and wind speed in meters/second.",
-		),
+		Description: openai.String("Get the current weather in a given location." +
+			" Returns conditions with temperatures in Celsius and wind speed in meters/second."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"location": map[string]any{
 					"type":        "string",
-					"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\"",
+					"description": `The city name and ISO 3166 country code, e.g. "London,GB" or "New York,US".`,
 				},
 			},
 			"required": []string{"location"},
@@ -69,20 +68,19 @@ func (t Forecast) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name:   "get_weather_forecast",
 		Strict: openai.Bool(true),
-		Description: openai.String("Get the weather forecast in a given location.\n" +
-			"// Returns a list with date and time in local timezone and predicted conditions every 3 hours.\n" +
-			"// Temperatures are in Celsius and wind speed in meters/second."),
+		Description: openai.String("Get the weather forecast in a given location." +
+			" Returns a list with date and time in local timezone and predicted conditions every 3 hours.\n" +
+			" Temperatures are in Celsius and wind speed in meters/second."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
 				"location": map[string]any{
 					"type":        "string",
-					"description": "The city name and ISO 3166 country code - e.g. \"London,GB\" or \"New York,US\"",
+					"description": `The city name and ISO 3166 country code, e.g. "London,GB" or "New York,US".`,
 				},
 				"periods": map[string]any{
 					"type":        "number",
-					"description": "Number of 3 hour periods to look ahead from current time",
-					"default":     24,
+					"description": `Number of 3 hour periods to look ahead from current time - default 24.`,
 				},
 			},
 			"required": []string{"location"},

@@ -279,9 +279,8 @@ class App {
 				if (resp.message.end && !this.showReasoning) {
 					refreshChat(app.chat, false);
 				}
-				if (resp.stats) {
-					updateStats(resp.stats);
-				}
+			case "stats":
+				updateStats(resp.stats);
 				break;
 			case "list":
 				const id = (resp.conversation) ? resp.conversation.id : "";
