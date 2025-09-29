@@ -235,9 +235,9 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 	var err error
 	ctx := context.Background()
 	if nostream {
-		_, _, err = api.ChatCompletion(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
+		_, err = api.ChatCompletion(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
 	} else {
-		_, _, err = api.ChatCompletionStream(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
+		_, err = api.ChatCompletionStream(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
 	}
 	if err != nil {
 		return conv, err

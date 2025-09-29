@@ -52,19 +52,22 @@ func main() {
 		}
 		req.Messages = append(req.Messages, openai.UserMessage(strings.TrimSpace(question)))
 		var message string
-		var stats api.Stats
 		if nostream {
-			message, stats, err = api.ChatCompletion(ctx, client, req, server, printOutput, nil)
+			message, err = api.ChatCompletion(ctx, client, req, server, printOutput, logStats)
 		} else {
-			message, stats, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, nil)
+			message, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, logStats)
 		}
-		fmt.Println()
-		stats.Loginfo()
-		if err != nil {
+		if err == nil {
+			req.Messages = append(req.Messages, openai.AssistantMessage(message))
+		} else {
 			log.Error(err)
+			req.Messages = req.Messages[:len(req.Messages)-1]
 		}
-		req.Messages = append(req.Messages, openai.AssistantMessage(message))
 	}
+}
+
+func logStats(stats api.Stats) {
+	stats.Loginfo()
 }
 
 func printOutput(channel, content string, index int, end bool) {

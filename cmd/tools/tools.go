@@ -32,6 +32,13 @@ func main() {
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
+	if api.Debug {
+		f, err := os.Create("debug.log")
+		if err == nil {
+			log.Info("writing debug trace to debug.log")
+			api.DebugTo = f
+		}
+	}
 	server := api.LlamaCpp
 	if openrouter {
 		server = api.OpenRouter
@@ -63,19 +70,22 @@ func main() {
 		browse.Reset()
 		pyexec.Stop()
 		var message string
-		var stats api.Stats
 		if nostream {
-			message, stats, err = api.ChatCompletion(ctx, client, req, server, printOutput, nil, tools...)
+			message, err = api.ChatCompletion(ctx, client, req, server, printOutput, logStats, tools...)
 		} else {
-			message, stats, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, nil, tools...)
+			message, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, logStats, tools...)
 		}
-		fmt.Println()
-		stats.Loginfo()
-		if err != nil {
+		if err == nil {
+			req.Messages = append(req.Messages, openai.AssistantMessage(message))
+		} else {
 			log.Error(err)
+			req.Messages = req.Messages[:len(req.Messages)-1]
 		}
-		req.Messages = append(req.Messages, openai.AssistantMessage(message))
 	}
+}
+
+func logStats(stats api.Stats) {
+	stats.Loginfo()
 }
 
 func initTools() (tools []api.ToolFunction, browse *browser.Browser, pyexec *python.Python) {
