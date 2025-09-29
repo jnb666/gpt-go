@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	katex "github.com/FurqanSoftware/goldmark-katex"
+	katex "github.com/jnb666/goldmark-katex"
 	log "github.com/sirupsen/logrus"
 	markdown "github.com/teekennedy/goldmark-markdown"
 	"github.com/yuin/goldmark"
