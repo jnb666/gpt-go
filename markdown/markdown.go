@@ -23,24 +23,17 @@ import (
 	"github.com/yuin/goldmark/util"
 )
 
-var (
-	reBlock  = regexp.MustCompile(`(?s)\\\[(.+?)\\\]`)
-	reInline = regexp.MustCompile(`\\\((.+?)\\\)`)
-	reLink   = regexp.MustCompile(`(?i)(<a href="[^"]+")`)
-)
+var reLink = regexp.MustCompile(`(?i)(<a href="[^"]+")`)
 
 // Render markdown document to HTML
 func Render(doc string) (string, error) {
-	// convert \(...\) inline math to $...$ and \[...\] block math to $$...$$
-	doc = reBlock.ReplaceAllString(doc, `$$$$$1$$$$`)
-	doc = reInline.ReplaceAllString(doc, `$$$1$$`)
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
-			&katex.Extender{},
+			&katex.Extender{LatexDelimiters: true},
 			highlighting.NewHighlighting(highlighting.WithStyle("monokai")),
 		),
-		goldmark.WithRendererOptions(htmlRenderer.WithHardWraps()),
+		goldmark.WithRendererOptions(htmlRenderer.WithHardWraps(), htmlRenderer.WithUnsafe()),
 	)
 	var buf bytes.Buffer
 	err := md.Convert([]byte(doc), &buf)

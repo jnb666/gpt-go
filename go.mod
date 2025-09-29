@@ -2,6 +2,8 @@ module github.com/jnb666/gpt-go
 
 go 1.24.4
 
+replace github.com/FurqanSoftware/goldmark-katex => ./goldmark-katex
+
 require (
 	github.com/FurqanSoftware/goldmark-katex v0.0.0-20250906161933-da324498b7cf
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.4.0

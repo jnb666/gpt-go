@@ -2,8 +2,6 @@ github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6 h1:He8af
 github.com/AdaLogics/go-fuzz-headers v0.0.0-20240806141605-e8a1dd7889d6/go.mod h1:8o94RPi1/7XTJvwPpRSzSUedZrtlirdB3r9Z20bi2f8=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c h1:udKWzYgxTojEKWjV8V+WSxDXJ4NFATAsZjh8iIbsQIg=
 github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c/go.mod h1:xomTg63KZ2rFqZQzSB4Vz2SUXa1BpHTVz9L5PTmPC4E=
-github.com/FurqanSoftware/goldmark-katex v0.0.0-20250906161933-da324498b7cf h1:ZA5A/MEOlBZ0ryTjao4JAPF+O0DoViHrb2M5/1qZk6w=
-github.com/FurqanSoftware/goldmark-katex v0.0.0-20250906161933-da324498b7cf/go.mod h1:oCOPFBEW7o69oU43gdE4XWDbPbS/TxWgzqVAr9s6ggo=
 github.com/JohannesKaufmann/dom v0.2.0 h1:1bragmEb19K8lHAqgFgqCpiPCFEZMTXzOIEjuxkUfLQ=
 github.com/JohannesKaufmann/dom v0.2.0/go.mod h1:57iSUl5RKric4bUkgos4zu6Xt5LMHUnw3TF1l5CbGZo=
 github.com/JohannesKaufmann/html-to-markdown/v2 v2.4.0 h1:C0/TerKdQX9Y9pbYi1EsLr5LDNANsqunyI/btpyfCg8=

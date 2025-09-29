@@ -34,6 +34,19 @@ pre code {
     color: #fff;
     background: #1c1b1b;
 }
+
+a:link {
+    color: hsl(217, 71%, 53%);
+}
+a:visited {
+    color: hsl(217, 71%, 53%);
+}
+a:hover {
+    color: hsl(217, 71%, 65%);
+}
+a:active {
+    color: hsl(217, 71%, 65%);
+}
     </style>
 
      <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" integrity="sha384-5TcZemv2l/9On385z///+d7MSYlvIEw9FuZTIdZ14vJLqWphw7e7ZPuOiCHJcFCP" crossorigin="anonymous">
