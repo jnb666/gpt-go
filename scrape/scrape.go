@@ -109,6 +109,7 @@ type Response struct {
 	Title      string
 	Markdown   string
 	RawHTML    string
+	MainHTML   string
 	Status     int
 	StatusText string
 	Timestamp  time.Time
@@ -235,6 +236,14 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 }
 
 func getContent(page playwright.Page, opt Options) (content, title string, err error) {
+	for {
+		n, _ := page.Locator("meta[http-equiv='refresh']").Count()
+		if n == 0 {
+			break
+		}
+		log.Debugf("%s: got meta refresh - waiting", page.URL())
+		page.WaitForTimeout(100)
+	}
 	for n := 0; n < maxRetries; n++ {
 		if opt.WaitFor > 0 {
 			page.WaitForTimeout(float64(opt.WaitFor.Milliseconds()))
@@ -289,10 +298,11 @@ func toMarkdown(r Response) (Response, error) {
 			}
 		})
 	}
-	html, err := doc.Html()
+	r.MainHTML, err = doc.Html()
 	if err != nil {
 		return r, err
 	}
+	r.MainHTML = strings.ReplaceAll(r.MainHTML, "\u00a0", " ") // &nbsp; elements
 	// convert to markdown
 	conv := converter.NewConverter(
 		converter.WithPlugins(
@@ -301,8 +311,7 @@ func toMarkdown(r Response) (Response, error) {
 			table.NewTablePlugin(),
 		),
 	)
-	html = strings.ReplaceAll(html, "\u00a0", " ") // &nbsp; elements
-	r.Markdown, err = conv.ConvertString(html, converter.WithDomain(r.URL))
+	r.Markdown, err = conv.ConvertString(r.MainHTML, converter.WithDomain(r.URL))
 	r.Markdown = reStrip.ReplaceAllLiteralString(r.Markdown, "")
 	return r, err
 }

@@ -109,7 +109,7 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		if reasoning != "" {
 			callback("analysis", reasoning+"\n", 0, false)
 		}
-		if len(choice.Message.ToolCalls) == 0 {
+		if len(choice.Message.ToolCalls) == 0 && content != "" {
 			callback("final", content+"\n", 0, true)
 			if statsCallback != nil {
 				statsCallback(stats)
@@ -151,7 +151,7 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		// parse response
 		choice := acc.Choices[0]
-		if len(choice.Message.ToolCalls) == 0 {
+		if len(choice.Message.ToolCalls) == 0 && acc.Content != "" {
 			callback("final", "\n", acc.index, false)
 			callback("final", acc.Content+"\n", acc.index+1, true)
 			if statsCallback != nil {

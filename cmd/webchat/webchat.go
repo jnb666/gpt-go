@@ -54,6 +54,13 @@ func main() {
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
+	if api.Debug {
+		f, err := os.Create("debug.log")
+		if err == nil {
+			log.Info("writing debug trace to debug.log")
+			api.DebugTo = f
+		}
+	}
 	if openrouter {
 		apiServer = api.OpenRouter
 	}
