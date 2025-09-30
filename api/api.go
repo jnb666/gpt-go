@@ -91,6 +91,8 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 	req := request
 	req.Messages = slices.Clone(request.Messages)
 	var content, reasoning string
+	retries := 0
+	maxRetries := 3
 	for {
 		// submit request
 		opts := requestOptions(req, server, reasoning)
@@ -109,7 +111,7 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		if reasoning != "" {
 			callback("analysis", reasoning+"\n", 0, false)
 		}
-		if len(choice.Message.ToolCalls) == 0 && content != "" {
+		if len(choice.Message.ToolCalls) == 0 && (content != "" || retries >= maxRetries) {
 			callback("final", content+"\n", 0, true)
 			if statsCallback != nil {
 				statsCallback(stats)
@@ -125,6 +127,11 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		if statsCallback != nil {
 			statsCallback(stats)
 		}
+		if len(choice.Message.ToolCalls) == 0 {
+			retries++
+		} else {
+			retries = 0
+		}
 	}
 }
 
@@ -137,6 +144,8 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 	req.Messages = slices.Clone(request.Messages)
 	req.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
 	var acc Accumulator
+	retries := 0
+	maxRetries := 3
 	for {
 		// submit streaming request
 		opts := requestOptions(req, server, acc.Reasoning)
@@ -151,7 +160,7 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		// parse response
 		choice := acc.Choices[0]
-		if len(choice.Message.ToolCalls) == 0 && acc.Content != "" {
+		if len(choice.Message.ToolCalls) == 0 && (acc.Content != "" || retries >= maxRetries) {
 			callback("final", "\n", acc.index, false)
 			callback("final", acc.Content+"\n", acc.index+1, true)
 			if statsCallback != nil {
@@ -167,6 +176,11 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		if statsCallback != nil {
 			statsCallback(stats)
+		}
+		if len(choice.Message.ToolCalls) == 0 {
+			retries++
+		} else {
+			retries = 0
 		}
 	}
 }
@@ -240,15 +254,18 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 
 // extra JSON fields to set in request
 func requestOptions(req openai.ChatCompletionNewParams, server Server, reasoning string) (opts []option.RequestOption) {
-	if reasoning != "" && len(req.Messages) > 2 {
-		ix := len(req.Messages) - 2
-		lastCall := req.Messages[ix]
-		if lastCall.OfAssistant != nil && param.IsOmitted(lastCall.OfAssistant.Content) {
-			switch server {
-			case LlamaCpp:
-				opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(ix)+".thinking", reasoning))
-			case OpenRouter:
-				opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(ix)+".reasoning", reasoning))
+	if reasoning != "" {
+		for i := len(req.Messages) - 1; i >= 0; i-- {
+			if req.Messages[i].OfAssistant != nil {
+				if param.IsOmitted(req.Messages[i].OfAssistant.Content) {
+					switch server {
+					case LlamaCpp:
+						opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+".thinking", reasoning))
+					case OpenRouter:
+						opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+".reasoning", reasoning))
+					}
+				}
+				break
 			}
 		}
 	}
