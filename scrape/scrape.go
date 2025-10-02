@@ -155,7 +155,8 @@ func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 			})
 	} else {
 		channel := "chromium"
-		userDataDir, err := os.MkdirTemp("", "chromium_user_data")
+		var userDataDir string
+		userDataDir, err = os.MkdirTemp("", "chromium_user_data")
 		if err != nil {
 			return r, err
 		}

@@ -279,6 +279,7 @@ class App {
 				if (resp.message.end && !this.showReasoning) {
 					refreshChat(app.chat, false);
 				}
+				break;
 			case "stats":
 				updateStats(resp.stats);
 				break;
