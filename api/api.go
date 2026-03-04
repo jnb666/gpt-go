@@ -242,11 +242,11 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 			content, reasoning := GetContent(chunk.Choices[0].Delta.RawJSON())
 			acc.Content += content
 			acc.Reasoning += reasoning
-			if reasoning != "" {
+			if strings.TrimSpace(reasoning) != "" {
 				callback(channel, reasoning, acc.index, false)
 				acc.index++
 			}
-			if content != "" {
+			if strings.TrimSpace(content) != "" {
 				if channel == "analysis" {
 					if acc.index > 0 {
 						callback(channel, "\n", acc.index, false)

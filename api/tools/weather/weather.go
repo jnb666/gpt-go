@@ -113,7 +113,7 @@ func currentWeather(location string, apiKey string) (w currentWeatherData, err e
 	uri := fmt.Sprintf("https://api.openweathermap.org/data/2.5/weather?lat=%f&lon=%f&appid=%s&units=metric",
 		loc.Lat, loc.Lon, apiKey)
 	w.Loc = loc
-	err = tools.Get(uri, &w)
+	_, err = tools.Get(uri, &w)
 	if err == nil && len(w.Weather) == 0 {
 		err = fmt.Errorf("current weather for %s not found", loc)
 	}
@@ -165,7 +165,7 @@ func weatherForecast(location string, periods int, apiKey string) (w forecastWea
 	uri := fmt.Sprintf("https://api.openweathermap.org/data/2.5/forecast?lat=%f&lon=%f&cnt=%d&appid=%s&units=metric",
 		loc.Lat, loc.Lon, periods, apiKey)
 	w.Loc = loc
-	err = tools.Get(uri, &w)
+	_, err = tools.Get(uri, &w)
 	if err == nil && len(w.List) == 0 {
 		err = fmt.Errorf("weather forecast for %s not found", loc)
 	}
@@ -195,7 +195,7 @@ func geocoding(location, apiKey string) (loc []location, err error) {
 	}
 	uri := fmt.Sprintf("http://api.openweathermap.org/geo/1.0/direct?q=%s&&appid=%s",
 		url.QueryEscape(location), apiKey)
-	err = tools.Get(uri, &loc)
+	_, err = tools.Get(uri, &loc)
 	if err == nil && len(loc) == 0 {
 		err = fmt.Errorf("location %q not found", location)
 	}

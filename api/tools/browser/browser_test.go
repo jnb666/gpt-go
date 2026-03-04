@@ -15,6 +15,19 @@ func TestSearch(t *testing.T) {
 	printLinks(t, browser, 10)
 }
 
+func TestRatelimit(t *testing.T) {
+	browser := newBrowser()
+	defer browser.Close()
+	search := Search{Browser: browser, MaxWords: MaxWords}
+	for _, query := range []string{"foo", "bar"} {
+		_, resp, err := search.Call(marshal(map[string]any{"query": query}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("response:\n%s", resp)
+	}
+}
+
 func TestOpenURL(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()

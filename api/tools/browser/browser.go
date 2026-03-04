@@ -4,10 +4,12 @@ package browser
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/jnb666/gpt-go/api"
@@ -36,6 +38,7 @@ type Browser struct {
 	Cursor      int
 	scaper      scrape.Browser
 	braveApiKey string
+	nextSearch  time.Time
 }
 
 // Create new browser instance
@@ -172,6 +175,13 @@ type searchResponse struct {
 			Title, URL, Description string
 		}
 	}
+	Headers http.Header
+}
+
+type ratelimitHeaders struct {
+	Limit     [2]int
+	Remaining [2]int
+	Reset     [2]int
 }
 
 // Call Brave web search API
@@ -179,9 +189,23 @@ func (t Search) search(query string, topn int) (resp searchResponse, err error) 
 	if t.braveApiKey == "" {
 		return resp, fmt.Errorf("BraveApiKey is required for search")
 	}
+	if tm := time.Now(); tm.Before(t.nextSearch) {
+		wait := t.nextSearch.Sub(tm)
+		log.Infof("Brave search rate limit - wait %s", wait.Round(time.Millisecond))
+		time.Sleep(wait)
+	}
 	uri := fmt.Sprintf("%s?q=%s&count=%d&country=%s&search_lang=%s&text_decorations=false",
 		BraveSearchURL, url.QueryEscape(query), topn, Country, Language)
-	err = tools.Get(uri, &resp, tools.Header{Key: "X-Subscription-Token", Value: t.braveApiKey})
+	h, err := tools.Get(uri, &resp, tools.Header{Key: "X-Subscription-Token", Value: t.braveApiKey})
+	limits := ratelimitHeaders{
+		Limit:     parseHeader(h.Get("X-RateLimit-Limit")),
+		Remaining: parseHeader(h.Get("X-RateLimit-Remaining")),
+		Reset:     parseHeader(h.Get("X-RateLimit-Reset")),
+	}
+	log.Debugf("Brave search rate limits: %+v", limits)
+	if limits.Remaining[0] == 0 {
+		t.nextSearch = time.Now().Add(time.Duration(limits.Reset[0]) * time.Second)
+	}
 	if err != nil {
 		return resp, err
 	}
@@ -383,4 +407,22 @@ func parseID(param any) (id int, url string) {
 		id = val
 	}
 	return
+}
+
+func parseHeader(h string) (r [2]int) {
+	if s1, s2, ok := strings.Cut(h, ","); ok {
+		r[0] = atoi(s1)
+		r[1] = atoi(s2)
+	} else {
+		log.Errorf("error parsing header: %s", h)
+	}
+	return
+}
+
+func atoi(s string) int {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		log.Error(err)
+	}
+	return n
 }
