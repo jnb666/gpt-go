@@ -113,17 +113,14 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		// parse response
 		choice := resp.Choices[0]
 		content, reasoning = GetContent(choice.Message.RawJSON())
-		if len(choice.Message.ToolCalls) == 0 || retries >= maxRetries {
-			if strings.TrimSpace(content) == "" {
-				content = reasoning
+		if len(choice.Message.ToolCalls) == 0 {
+			if strings.TrimSpace(content) != "" {
+				break
 			}
-			callback("final", content+"\n", 0, true)
-			if statsCallback != nil {
-				statsCallback(stats)
+			if retries >= maxRetries {
+				content = fmt.Sprintf("Error: giving up on request after %d retries", maxRetries)
+				break
 			}
-			return content, nil
-		} else if reasoning != "" {
-			callback("analysis", reasoning+"\n", 0, false)
 		}
 		// have tool call - call function and resend
 		req.Messages = append(req.Messages, choice.Message.ToParam())
@@ -136,10 +133,16 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		}
 		if len(choice.Message.ToolCalls) == 0 {
 			retries++
+			log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
 		} else {
 			retries = 0
 		}
 	}
+	callback("final", content+"\n", 0, true)
+	if statsCallback != nil {
+		statsCallback(stats)
+	}
+	return content, nil
 }
 
 // As per ChatCompletion but will stream responses as they are generated generated
@@ -167,16 +170,14 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		// parse response
 		choice := acc.Choices[0]
-		if len(choice.Message.ToolCalls) == 0 || retries >= maxRetries {
-			if strings.TrimSpace(acc.Content) == "" {
-				acc.Content = acc.Reasoning
+		if len(choice.Message.ToolCalls) == 0 {
+			if strings.TrimSpace(acc.Content) != "" {
+				break
 			}
-			callback("final", "\n", acc.index, false)
-			callback("final", acc.Content+"\n", acc.index+1, true)
-			if statsCallback != nil {
-				statsCallback(stats)
+			if retries >= maxRetries {
+				acc.Content = fmt.Sprintf("Error: giving up on request after %d retries", maxRetries)
+				break
 			}
-			return acc.Content, nil
 		}
 		// have tool call - call function and resend
 		req.Messages = append(req.Messages, choice.Message.ToParam())
@@ -189,10 +190,17 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		if len(choice.Message.ToolCalls) == 0 {
 			retries++
+			log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
 		} else {
 			retries = 0
 		}
 	}
+	callback("final", "\n", acc.index, false)
+	callback("final", acc.Content+"\n", acc.index+1, true)
+	if statsCallback != nil {
+		statsCallback(stats)
+	}
+	return acc.Content, nil
 }
 
 // call tools, update stats and call callback with request and response text
