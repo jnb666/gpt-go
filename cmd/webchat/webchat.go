@@ -42,17 +42,20 @@ var apiServer = api.LlamaCpp
 
 func main() {
 	var server http.Server
-	var openrouter bool
+	var openrouter, cerebras bool
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
 	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
+	flag.BoolVar(&cerebras, "cerebras", false, "use cerebras endpoint")
 	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
 	flag.Parse()
 
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	if debug {
 		log.SetLevel(log.DebugLevel)
+	} else {
+		log.SetLevel(log.InfoLevel)
 	}
 	if api.Debug {
 		f, err := os.Create("debug.log")
@@ -63,6 +66,8 @@ func main() {
 	}
 	if openrouter {
 		apiServer = api.OpenRouter
+	} else if cerebras {
+		apiServer = api.Cerebras
 	}
 
 	http.Handle("/", fsHandler())
@@ -94,6 +99,7 @@ func main() {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		log.Fatal("HTTP shutdown error: ", err)
 	}
+	time.Sleep(time.Second)
 	log.Info("server shutdown")
 }
 

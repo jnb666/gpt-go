@@ -62,8 +62,8 @@ type Link struct {
 // Format link with id, title and host if different from srcHost.
 func (l Link) Format(id int, srcHost string) string {
 	host := URLHost(l.URL)
-	if host != "" && srcHost != "" && host != srcHost {
-		return fmt.Sprintf("【%d†%s†%s】", id, l.Title, host)
+	if host != "" && host != srcHost {
+		return fmt.Sprintf("【%d†%s】(%s)", id, l.Title, l.URL)
 	} else {
 		return fmt.Sprintf("【%d†%s】", id, l.Title)
 	}

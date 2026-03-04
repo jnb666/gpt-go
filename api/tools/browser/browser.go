@@ -82,7 +82,7 @@ func (s *Browser) Postprocess(content string) string {
 		}
 		cursor, err := strconv.Atoi(m[1])
 		if err != nil || cursor < 0 || cursor >= len(s.Docs) {
-			log.Warnf("postprocess: error parsing citation %q - invalid cursor", ref)
+			log.Warnf("postprocess: error parsing citation %q - invalid cursor %d - expecting 0-%d", ref, cursor, len(s.Docs)-1)
 			return ref
 		}
 		url := s.Docs[cursor].URL
@@ -115,8 +115,7 @@ type Search struct {
 
 func (t Search) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:   "browser_search",
-		Strict: openai.Bool(true),
+		Name: "browser_search",
 		Description: openai.String("Searches the web for information related to `query` and displays `topn` results." +
 			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
 			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
@@ -200,8 +199,7 @@ type Open struct {
 
 func (t Open) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:   "browser_open",
-		Strict: openai.Bool(true),
+		Name: "browser_open",
 		Description: openai.String("Opens the link `id` from the page indicated by `cursor` starting at line number `loc`." +
 			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
 			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
@@ -226,7 +224,7 @@ func (t Open) Definition() shared.FunctionDefinitionParam {
 	}
 }
 
-// Gets markdown content using a Firecrawl scape request
+// Gets markdown content using a playwright scape request
 func (t Open) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_open(%s)", len(t.Docs), arg)
 	var args struct {
@@ -241,11 +239,11 @@ func (t Open) Call(arg string) (req, res string, err error) {
 	}
 	req = fmt.Sprintf("browser.open%+v", args)
 	var current, doc markdown.Document
-	switch url := args.ID.(type) {
-	case string:
+	id, url := parseID(args.ID)
+	log.Debugf("open %+v => id=%d url=%q", args, id, url)
+	if url != "" {
 		doc, err = t.scrape(url, "", "")
-	case float64:
-		id := int(url)
+	} else {
 		if current, err = t.current(int(args.Cursor)); err == nil {
 			if id >= 0 && id < len(current.Links) {
 				doc, err = t.scrape(current.Links[id].URL, current.Links[id].Title, current.URL)
@@ -253,8 +251,6 @@ func (t Open) Call(arg string) (req, res string, err error) {
 				doc = current
 			}
 		}
-	default:
-		doc, err = t.current(int(args.Cursor))
 	}
 	if err != nil {
 		log.Error(err)
@@ -292,8 +288,7 @@ type Find struct {
 
 func (t Find) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:   "browser_find",
-		Strict: openai.Bool(true),
+		Name: "browser_find",
 		Description: openai.String("Finds exact matches of `pattern` in the current page, or the page given by `cursor`." +
 			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
 			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
@@ -371,4 +366,21 @@ func linkTitle(s string) string {
 		return ' '
 	}, s)
 	return s
+}
+
+func parseID(param any) (id int, url string) {
+	switch val := param.(type) {
+	case string:
+		n, err := strconv.Atoi(val)
+		if err == nil {
+			id = n
+		} else {
+			url = val
+		}
+	case float64:
+		id = int(val)
+	case int:
+		id = val
+	}
+	return
 }

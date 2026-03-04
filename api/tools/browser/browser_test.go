@@ -76,10 +76,11 @@ func TestBlocked(t *testing.T) {
 func TestOpenID(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	doSearch(t, browser, "local LLM hosting")
+	resp := doSearch(t, browser, "local LLM hosting")
+	t.Log(resp)
 
 	open := Open{Browser: browser, MaxWords: MaxWords}
-	_, resp, _ := open.Call(marshal(map[string]any{"id": 3}))
+	_, resp, _ = open.Call(marshal(map[string]any{"id": 3}))
 	t.Logf("response:\n%s", resp)
 	_, resp, _ = open.Call(marshal(map[string]any{"loc": 63}))
 	t.Logf("scroll page:\n%s", resp)

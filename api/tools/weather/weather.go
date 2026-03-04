@@ -29,8 +29,7 @@ type Current struct {
 
 func (t Current) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:   "get_current_weather",
-		Strict: openai.Bool(true),
+		Name: "get_current_weather",
 		Description: openai.String("Get the current weather in a given location." +
 			" Returns conditions with temperatures in Celsius and wind speed in meters/second."),
 		Parameters: shared.FunctionParameters{
@@ -66,8 +65,7 @@ type Forecast struct {
 
 func (t Forecast) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
-		Name:   "get_weather_forecast",
-		Strict: openai.Bool(true),
+		Name: "get_weather_forecast",
 		Description: openai.String("Get the weather forecast in a given location." +
 			" Returns a list with date and time in local timezone and predicted conditions every 3 hours.\n" +
 			" Temperatures are in Celsius and wind speed in meters/second."),

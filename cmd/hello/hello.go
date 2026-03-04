@@ -15,7 +15,6 @@ func main() {
 
 	question := "Hello"
 	req := openai.ChatCompletionNewParams{
-		Model: "@preset/gpt-oss-120",
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage(question),
 		},

@@ -11,6 +11,7 @@ import (
 	"os"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v2"
@@ -33,6 +34,7 @@ func init() {
 const (
 	LlamaCpp   Server = 0
 	OpenRouter Server = 1
+	Cerebras   Server = 2
 )
 
 type Server int
@@ -62,6 +64,9 @@ func DefaultModel(server Server) (baseURL, modelName string) {
 	case OpenRouter:
 		baseURL = "https://openrouter.ai/api/v1"
 		modelName = "@preset/gpt-oss-120"
+	case Cerebras:
+		baseURL = "https://api.cerebras.ai/v1"
+		modelName = "gpt-oss-120b"
 	}
 	return
 }
@@ -108,15 +113,17 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 		// parse response
 		choice := resp.Choices[0]
 		content, reasoning = GetContent(choice.Message.RawJSON())
-		if reasoning != "" {
-			callback("analysis", reasoning+"\n", 0, false)
-		}
-		if len(choice.Message.ToolCalls) == 0 && (content != "" || retries >= maxRetries) {
+		if len(choice.Message.ToolCalls) == 0 || retries >= maxRetries {
+			if strings.TrimSpace(content) == "" {
+				content = reasoning
+			}
 			callback("final", content+"\n", 0, true)
 			if statsCallback != nil {
 				statsCallback(stats)
 			}
 			return content, nil
+		} else if reasoning != "" {
+			callback("analysis", reasoning+"\n", 0, false)
 		}
 		// have tool call - call function and resend
 		req.Messages = append(req.Messages, choice.Message.ToParam())
@@ -160,7 +167,10 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 		}
 		// parse response
 		choice := acc.Choices[0]
-		if len(choice.Message.ToolCalls) == 0 && (acc.Content != "" || retries >= maxRetries) {
+		if len(choice.Message.ToolCalls) == 0 || retries >= maxRetries {
+			if strings.TrimSpace(acc.Content) == "" {
+				acc.Content = acc.Reasoning
+			}
 			callback("final", "\n", acc.index, false)
 			callback("final", acc.Content+"\n", acc.index+1, true)
 			if statsCallback != nil {
@@ -258,12 +268,11 @@ func requestOptions(req openai.ChatCompletionNewParams, server Server, reasoning
 		for i := len(req.Messages) - 1; i >= 0; i-- {
 			if req.Messages[i].OfAssistant != nil {
 				if param.IsOmitted(req.Messages[i].OfAssistant.Content) {
-					switch server {
-					case LlamaCpp:
-						opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+".thinking", reasoning))
-					case OpenRouter:
-						opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+".reasoning", reasoning))
+					field := "reasoning"
+					if server == LlamaCpp {
+						field = "thinking"
 					}
+					opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+"."+field, reasoning))
 				}
 				break
 			}

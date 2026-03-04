@@ -126,7 +126,7 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 	req.Model = shared.ChatModel(modelName)
 	req.ReasoningEffort = shared.ReasoningEffort(cfg.ReasoningEffort)
 	if cfg.SystemPrompt != "" {
-		req.Messages = append(req.Messages, openai.DeveloperMessage(cfg.SystemPrompt))
+		req.Messages = append(req.Messages, openai.SystemMessage(cfg.SystemPrompt))
 	}
 	var enabledTools []ToolFunction
 	for _, tool := range tools {

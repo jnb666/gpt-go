@@ -17,13 +17,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var debug, nostream, openrouter, useWeather, useBrowser, usePython bool
+var debug, nostream, openrouter, cerebras, useWeather, useBrowser, usePython bool
 
 func main() {
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
 	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
+	flag.BoolVar(&cerebras, "cerebras", false, "use cerebras endpoint")
 	flag.BoolVar(&useWeather, "weather", false, "enable weather tool")
 	flag.BoolVar(&useBrowser, "browser", false, "enable browser tool")
 	flag.BoolVar(&usePython, "python", false, "enable python tool")
@@ -42,6 +43,8 @@ func main() {
 	server := api.LlamaCpp
 	if openrouter {
 		server = api.OpenRouter
+	} else if cerebras {
+		server = api.Cerebras
 	}
 	baseURL, modelName := api.DefaultModel(server)
 	log.Infof("connecting to %s %s", baseURL, modelName)
