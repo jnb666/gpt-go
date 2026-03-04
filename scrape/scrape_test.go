@@ -1,9 +1,11 @@
 package scrape
 
 import (
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/playwright-community/playwright-go"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -89,9 +91,13 @@ func TestInvalidHost(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()
 	_, err := b.Scrape("https://itsabanana.de")
-	t.Log(err)
-	if err.Error() != "Error getting page: NS_ERROR_UNKNOWN_HOST" {
-		t.Error("expecting error")
+	if e, ok := errors.AsType[*playwright.Error](err); ok {
+		t.Log(e)
+		if e.Message != "NS_ERROR_UNKNOWN_HOST" {
+			t.Error("expecting NS_ERROR_UNKNOWN_HOST")
+		}
+	} else {
+		t.Error("expecting playwright error")
 	}
 }
 
@@ -111,10 +117,11 @@ func TestNotFound(t *testing.T) {
 }
 
 func TestAntibot(t *testing.T) {
-	b := NewBrowser(func(opt *Options) {
+	opts := func(opt *Options) {
 		opt.Headless = false
 		opt.CloseWait = time.Minute
-	})
+	}
+	b := NewBrowser(opts)
 	defer b.Shutdown()
-	b.Scrape("https://bot.sannysoft.com/")
+	b.Scrape("https://bot.sannysoft.com/", opts)
 }

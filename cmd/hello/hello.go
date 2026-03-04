@@ -6,7 +6,7 @@ import (
 	"os"
 
 	"github.com/jnb666/gpt-go/api"
-	"github.com/openai/openai-go/v2"
+	"github.com/openai/openai-go/v3"
 )
 
 func main() {

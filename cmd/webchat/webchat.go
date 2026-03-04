@@ -23,8 +23,8 @@ import (
 	"github.com/jnb666/gpt-go/api/tools/python"
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/option"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 )
 

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	api "github.com/docker/docker/api/types/container"
 	"github.com/docker/go-sdk/container"
 	"github.com/docker/go-sdk/container/exec"
-	"github.com/openai/openai-go/v2"
-	"github.com/openai/openai-go/v2/shared"
+	moby_container "github.com/moby/moby/api/types/container"
+	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/shared"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -111,7 +111,7 @@ func (c *Python) start(ctx context.Context) error {
 	log.Debug("python: start container")
 	c.ctr, err = container.Run(ctx,
 		container.WithImage("gpt-go-python-tool"),
-		container.WithHostConfigModifier(func(h *api.HostConfig) {
+		container.WithHostConfigModifier(func(h *moby_container.HostConfig) {
 			h.NetworkMode = "none"
 			h.Resources.Memory = int64(c.cfg.MemoryBytes)
 		}),

@@ -57,7 +57,7 @@ func TestNotFound(t *testing.T) {
 	open := Open{Browser: browser, MaxWords: MaxWords}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/nonsuch/"}))
 	t.Logf("response:\n%s", resp)
-	if !strings.HasPrefix(resp, "Error 404: Not Found") {
+	if !strings.Contains(resp, "404: Not Found") {
 		t.Error("expecting error")
 	}
 }
@@ -68,7 +68,7 @@ func TestBlocked(t *testing.T) {
 	open := Open{Browser: browser, MaxWords: MaxWords}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.g2.com/"}))
 	t.Logf("response:\n%s", resp)
-	if !strings.HasPrefix(resp, "Error 403: Forbidden") {
+	if !strings.Contains(resp, "403: Forbidden") {
 		t.Error("expecting error")
 	}
 }
