@@ -27,10 +27,12 @@ var reLink = regexp.MustCompile(`(?i)(<a href="[^"]+")`)
 
 // Render markdown document to HTML
 func Render(doc string) (string, error) {
+	latexDelims := strings.Contains(doc, "\\[") && strings.Contains(doc, "\\]") ||
+		strings.Contains(doc, "\\(") && strings.Contains(doc, "\\)")
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
-			&katex.Extender{LatexDelimiters: true},
+			&katex.Extender{LatexDelimiters: latexDelims},
 			highlighting.NewHighlighting(highlighting.WithStyle("monokai")),
 		),
 		goldmark.WithRendererOptions(htmlRenderer.WithHardWraps(), htmlRenderer.WithUnsafe()),

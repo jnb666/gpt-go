@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -10,6 +11,8 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 	log "github.com/sirupsen/logrus"
 )
+
+var DefaultSystemMessage = "You are a helpful assistant. You should answer concisely unless more detail is requested. The current date is {{today}}."
 
 // Chat API request from frontend to webserver
 type Request struct {
@@ -105,7 +108,7 @@ func (s *Stats) toolCalled(name string, start time.Time) {
 
 // Get default configuration with given tools enabled
 func DefaultConfig(tools ...ToolFunction) Config {
-	cfg := Config{ReasoningEffort: "medium"}
+	cfg := Config{ReasoningEffort: "medium", SystemPrompt: DefaultSystemMessage}
 	for _, tool := range tools {
 		cfg.Tools = append(cfg.Tools, ToolConfig{Name: tool.Definition().Name, Enabled: true})
 	}
@@ -126,7 +129,7 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 	req.Model = shared.ChatModel(modelName)
 	req.ReasoningEffort = shared.ReasoningEffort(cfg.ReasoningEffort)
 	if cfg.SystemPrompt != "" {
-		req.Messages = append(req.Messages, openai.SystemMessage(cfg.SystemPrompt))
+		req.Messages = append(req.Messages, parseSystemPrompt(cfg.SystemPrompt))
 	}
 	var enabledTools []ToolFunction
 	for _, tool := range tools {
@@ -144,6 +147,12 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 		}
 	}
 	return req
+}
+
+func parseSystemPrompt(s string) openai.ChatCompletionMessageParamUnion {
+	today := time.Now().Format("2 January 2006")
+	s = strings.ReplaceAll(s, "{{today}}", today)
+	return openai.SystemMessage(s)
 }
 
 func msec(n int) string {
