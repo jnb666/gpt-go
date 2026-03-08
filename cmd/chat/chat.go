@@ -11,35 +11,33 @@ import (
 	"github.com/jnb666/gpt-go/api"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/shared"
 	log "github.com/sirupsen/logrus"
 )
 
 func main() {
-	var nostream, openrouter bool
+	var debug, nostream bool
 	var systemPrompt, reasoning string
-	flag.StringVar(&reasoning, "reasoning", "medium", "set reasoning - low, medium or high")
+	flag.StringVar(&reasoning, "reasoning", "medium", "set reasoning - none, low, medium or high")
 	flag.StringVar(&systemPrompt, "system", "", "set custom system prompt")
-	flag.BoolVar(&api.Debug, "debug", false, "enable debug logging")
+	flag.BoolVar(&debug, "debug", false, "enable debug logging")
+	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
-	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
 	flag.Parse()
-
-	server := api.LlamaCpp
-	if openrouter {
-		server = api.OpenRouter
+	if debug {
+		log.SetLevel(log.DebugLevel)
 	}
+
+	server := api.VLLM
 	baseURL, modelName := api.DefaultModel(server)
 	log.Infof("connecting to %s %s", baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
-	req := openai.ChatCompletionNewParams{
-		Model:           modelName,
-		ReasoningEffort: shared.ReasoningEffort(reasoning),
-	}
+	cfg := api.DefaultConfig()
+	cfg.ReasoningEffort = reasoning
 	if systemPrompt != "" {
-		req.Messages = append(req.Messages, openai.SystemMessage(systemPrompt))
+		cfg.SystemPrompt = systemPrompt
 	}
+	conv := api.NewConversation(cfg)
 
 	input := bufio.NewReader(os.Stdin)
 	ctx := context.Background()
@@ -50,18 +48,23 @@ func main() {
 		if err != nil {
 			break
 		}
-		req.Messages = append(req.Messages, openai.UserMessage(strings.TrimSpace(question)))
-		var message string
+		conv.Messages = append(conv.Messages, api.Message{Role: "user", Content: strings.TrimSpace(question)})
+		req, err := api.NewRequest(modelName, conv)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var msgs []api.Message
 		if nostream {
-			message, err = api.ChatCompletion(ctx, client, req, server, printOutput, logStats)
+			msgs, err = api.ChatCompletion(ctx, client, req, printOutput, logStats)
 		} else {
-			message, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, logStats)
+			msgs, err = api.ChatCompletionStream(ctx, client, req, printOutput, logStats)
 		}
 		if err == nil {
-			req.Messages = append(req.Messages, openai.AssistantMessage(message))
+			log.Debug(api.Pretty(msgs))
+			conv.Messages = append(conv.Messages, msgs...)
 		} else {
 			log.Error(err)
-			req.Messages = req.Messages[:len(req.Messages)-1]
+			conv.Messages = conv.Messages[:len(conv.Messages)-1]
 		}
 	}
 }
@@ -72,7 +75,7 @@ func logStats(stats api.Stats) {
 
 func printOutput(channel, content string, index int, end bool) {
 	if index == 0 {
-		fmt.Printf("== %s ==\n", channel)
+		fmt.Printf("\n== %s ==\n", channel)
 	}
 	if index == 0 || !end {
 		fmt.Print(content)

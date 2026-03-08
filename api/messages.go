@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -39,10 +40,16 @@ type Conversation struct {
 }
 
 type Message struct {
-	Type    string `json:"type"`   // user | analysis | final
-	Update  bool   `json:"update"` // true if update to existing message
-	End     bool   `json:"end"`    // true if update and message is now complete
-	Content string `json:"content"`
+	Role            string          `json:"role"`            // user | assistant | tool
+	Update          bool            `json:"update,omitzero"` // true if update to existing message
+	End             bool            `json:"end,omitzero"`    // true if update and message is now complete
+	Content         string          `json:"content"`
+	Reasoning       string          `json:"reasoning,omitzero"`
+	ToolCall        json.RawMessage `json:"tool_call,omitzero"`
+	ToolCallID      string          `json:"tool_call_id,omitzero"`
+	ContentTokens   int             `json:"content_tokens,omitzero"`
+	ReasoningTokens int             `json:"reasoning_tokens,omitzero"`
+	Excluded        bool            `json:"excluded,omitzero"` // message is ignored by NewRequest if this is set
 }
 
 type Item struct {
@@ -51,9 +58,14 @@ type Item struct {
 }
 
 type Config struct {
-	SystemPrompt    string       `json:"system_prompt"`
-	ReasoningEffort string       `json:"reasoning_effort"` // low | medium | high
-	Tools           []ToolConfig `json:"tools,omitzero"`
+	SystemPrompt      string       `json:"system_prompt"`
+	ReasoningEffort   string       `json:"reasoning_effort"` // low | medium | high | none
+	Tools             []ToolConfig `json:"tools,omitzero"`
+	Temperature       float64      `json:"temperature,omitzero"`
+	TopP              float64      `json:"top_p,omitzero"`
+	TopK              int          `json:"top_k,omitzero"`
+	PresencePenalty   float64      `json:"presence_penalty,omitzero"`
+	RepetitionPenalty float64      `json:"repetition_penalty,omitzero"`
 }
 
 type ToolConfig struct {
@@ -76,12 +88,20 @@ func newStats() Stats {
 	return Stats{Functions: map[string]int{}}
 }
 
-func (s *Stats) Loginfo() {
-	log.Infof("%d API calls in %s  %d prompt tokens  %d completion tokens at %.1f tok/sec",
+func (s *Stats) APICallInfo() string {
+	return fmt.Sprintf("%d API calls in %s  %d prompt tokens  %d completion tokens at %.1f tok/sec",
 		s.ApiCalls, msec(s.ApiTime), s.PromptTokens, s.CompletionTokens, s.CompletionTokensPerSec())
+}
+
+func (s *Stats) ToolCallInfo() string {
+	funcs := fmt.Sprint(s.Functions)
+	return fmt.Sprintf("%d tool calls in %s - %s", s.ToolCalls, msec(s.ToolTime), funcs[4:len(funcs)-1])
+}
+
+func (s *Stats) Loginfo() {
+	log.Info(s.APICallInfo())
 	if s.ToolCalls > 0 {
-		funcs := fmt.Sprint(s.Functions)
-		log.Infof("%d tool calls in %s - %s", s.ToolCalls, msec(s.ToolTime), funcs[4:len(funcs)-1])
+		log.Info(s.ToolCallInfo())
 	}
 }
 
@@ -108,7 +128,15 @@ func (s *Stats) toolCalled(name string, start time.Time) {
 
 // Get default configuration with given tools enabled
 func DefaultConfig(tools ...ToolFunction) Config {
-	cfg := Config{ReasoningEffort: "medium", SystemPrompt: DefaultSystemMessage}
+	cfg := Config{
+		SystemPrompt:      DefaultSystemMessage,
+		ReasoningEffort:   "medium",
+		Temperature:       1.0,
+		TopP:              0.95,
+		TopK:              20,
+		PresencePenalty:   1.5,
+		RepetitionPenalty: 1.0,
+	}
 	for _, tool := range tools {
 		cfg.Tools = append(cfg.Tools, ToolConfig{Name: tool.Definition().Name, Enabled: true})
 	}
@@ -123,14 +151,77 @@ func NewConversation(cfg Config) Conversation {
 	}
 }
 
-// Create a new chat completion request with given config settings.
-func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionNewParams) {
+// Convert from openai chat completion message to our message format
+func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
+	var msg Message
+	if role := m.GetRole(); role != nil {
+		msg.Role = *role
+	}
+	if content, ok := m.GetContent().AsAny().(*string); ok {
+		msg.Content = *content
+	}
+	if extra := m.ExtraFields(); extra != nil {
+		if text, ok := extra[ReasoningField].(string); ok {
+			msg.Reasoning = text
+		}
+	}
+	if m.OfAssistant != nil && len(m.OfAssistant.ToolCalls) > 0 {
+		data, err := json.Marshal(m.OfAssistant.ToolCalls)
+		if err != nil {
+			panic(err)
+		}
+		msg.ToolCall = data
+	}
+	if m.OfTool != nil {
+		msg.Role = "tool"
+		msg.ToolCallID = m.OfTool.ToolCallID
+	}
+	return msg
+}
+
+// Convert our message format to openai chat completion struct
+func FromMessage(m Message) (msg openai.ChatCompletionMessageParamUnion, err error) {
+	switch m.Role {
+	case "user":
+		return openai.UserMessage(m.Content), nil
+	case "assistant":
+		msg = openai.AssistantMessage(m.Content)
+		msg.SetExtraFields(map[string]any{ReasoningField: m.Reasoning})
+		if len(m.ToolCall) != 0 {
+			err = json.Unmarshal(m.ToolCall, &msg.OfAssistant.ToolCalls)
+		}
+		return msg, err
+	case "tool":
+		return openai.ToolMessage(m.Content, m.ToolCallID), nil
+	default:
+		return msg, fmt.Errorf("invalid message role: %s", m.Role)
+	}
+}
+
+// Create a new chat completion request with given config settings. Messages with Excluded set are omitted from the request.
+func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionNewParams, err error) {
 	cfg := conv.Config
+	extra := map[string]any{}
 	req.Model = shared.ChatModel(modelName)
 	req.ReasoningEffort = shared.ReasoningEffort(cfg.ReasoningEffort)
+	req.Temperature = openai.Float(cfg.Temperature)
+	if cfg.TopP != 0 {
+		req.TopP = openai.Float(cfg.TopP)
+	}
+	if cfg.TopK != 0 {
+		extra["top_k"] = cfg.TopK
+	}
+	if cfg.PresencePenalty != 0 {
+		req.PresencePenalty = openai.Float(cfg.PresencePenalty)
+	}
+	if cfg.RepetitionPenalty != 0 {
+		extra["repetition_penalty"] = cfg.RepetitionPenalty
+	}
 	if cfg.SystemPrompt != "" {
 		req.Messages = append(req.Messages, parseSystemPrompt(cfg.SystemPrompt))
 	}
+	req.SetExtraFields(extra)
+
 	var enabledTools []ToolFunction
 	for _, tool := range tools {
 		def := tool.Definition()
@@ -139,14 +230,16 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 		}
 	}
 	req.Tools = ChatCompletionToolParams(enabledTools)
-	for _, msg := range conv.Messages {
-		if msg.Type == "user" {
-			req.Messages = append(req.Messages, openai.UserMessage(msg.Content))
-		} else if msg.Type == "final" {
-			req.Messages = append(req.Messages, openai.AssistantMessage(msg.Content))
+	for _, m := range conv.Messages {
+		if !m.Excluded {
+			msg, err := FromMessage(m)
+			if err != nil {
+				return req, err
+			}
+			req.Messages = append(req.Messages, msg)
 		}
 	}
-	return req
+	return req, nil
 }
 
 func parseSystemPrompt(s string) openai.ChatCompletionMessageParamUnion {
@@ -157,4 +250,13 @@ func parseSystemPrompt(s string) openai.ChatCompletionMessageParamUnion {
 
 func msec(n int) string {
 	return (time.Duration(n) * time.Millisecond).String()
+}
+
+// Pretty print struct
+func Pretty(v any) string {
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		log.Error(err)
+	}
+	return string(data)
 }

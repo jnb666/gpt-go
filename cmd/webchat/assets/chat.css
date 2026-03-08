@@ -125,22 +125,29 @@ a:active {
     left: 200px;
     width: calc(100% - 300px);
     padding: 20px;
-    margin-top: 60px;    
+    margin-top: 60px;
 }
 
 #config-form {
     display: grid;
-    gap: 20px 30px;
+    gap: 10px 30px;
     grid-template-columns: 1fr 3fr;
     color: rgba(255,255,255,0.98);
+    font-size: 14px;
+}
+
+#config-form input, textarea {
+    font-size: 14px;
 }
 
 #config-form > label {
     text-align: right;
 }
 
-#config-form input[type=text] {
-    width: 80%;
+#config-form input[type=checkbox] {
+    vertical-align: middle;
+    padding: 10px;
+    border: 1px solid red;
 }
 
 #config-form textarea {
@@ -242,7 +249,7 @@ a:active {
 
 .analysis .msg {
     font-size: 12px;
-    padding: 10px;
+    padding: 0px 10px;
 }
 
 .analysis pre {

@@ -13,9 +13,9 @@ func init() {
 	log.SetLevel(log.DebugLevel)
 }
 
-func scrape(t *testing.T, b Browser, url string, withOptions ...func(*Options)) {
+func scrape(t *testing.T, b Browser, url string) {
 	t.Log("scraping", url)
-	r, err := b.Scrape(url, withOptions...)
+	r, err := b.Scrape(url)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,14 +47,23 @@ func TestReuters(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()
 	scrape(t, b, "https://www.reuters.com/")
-	scrape(t, b, "https://www.reuters.com/world/uk/",
-		func(opt *Options) { opt.Referer = "https://www.reuters.com/" })
+	scrape(t, b, "https://www.reuters.com/world/uk/")
 }
 
 func TestReddit(t *testing.T) {
 	b := NewBrowser()
 	defer b.Shutdown()
 	scrape(t, b, "https://www.reddit.com/r/LocalLLaMA/comments/1mke7ef/120b_runs_awesome_on_just_8gb_vram/")
+}
+
+func TestTelegraph(t *testing.T) {
+	opts := func(opt *Options) {
+		opt.CDPEndpoint = "http://localhost:9222"
+		opt.WaitFor = time.Second
+	}
+	b := NewBrowser(opts)
+	defer b.Shutdown()
+	scrape(t, b, "https://www.telegraph.co.uk/business/2026/02/02/labour-backbenchers-revolt-over-starmer-nuclear-plans/")
 }
 
 func TestGithub(t *testing.T) {
@@ -118,10 +127,10 @@ func TestNotFound(t *testing.T) {
 
 func TestAntibot(t *testing.T) {
 	opts := func(opt *Options) {
-		opt.Headless = false
+		opt.CDPEndpoint = "http://localhost:9222"
 		opt.CloseWait = time.Minute
 	}
 	b := NewBrowser(opts)
 	defer b.Shutdown()
-	b.Scrape("https://bot.sannysoft.com/", opts)
+	b.Scrape("https://bot.sannysoft.com/")
 }

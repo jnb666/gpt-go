@@ -46,9 +46,36 @@
         <div>
           <textarea name="system"></textarea>
         </div>
+        <label>temperature:</label>
+        <div>
+          <input name="temperature" type="text">
+        </div>
+        <label>top P:</label>
+        <div>
+          <input name="top_p" type="text">
+        </div>
+        <label>top K:</label>
+        <div>
+          <input name="top_k" type="text">
+        </div>
+        <label>presence penalty:</label>
+        <div>
+          <input name="presence_penalty" type="text">
+        </div>
+        <label>repetition penalty:</label>
+        <div>
+          <input name="repetition_penalty" type="text">
+        </div>
+        <label>disable thinking:</label>
+        <div>
+          <fieldset>
+            <input name="disable_thinking" type="checkbox">
+          </fieldset>
+        </div>
         <label>reasoning effort:</label>
         <div>
           <fieldset>
+            <input id="reasoning-none" name="reasoning" value="none" type="radio"> <label for="reasoning-none">none</label> &nbsp;
             <input id="reasoning-low" name="reasoning" value="low" type="radio"> <label for="reasoning-low">low</label> &nbsp;
             <input id="reasoning-medium" name="reasoning" value="medium" type="radio"> <label for="reasoning-medium">medium</label> &nbsp;
             <input id="reasoning-high" name="reasoning" value="high" type="radio"> <label for="reasoning-high">high</label> &nbsp;
@@ -65,7 +92,7 @@
         </div>
       </form>      
     </div>
-    <div class="typezone">
+    <div id="input-box" class="typezone">
       <textarea id="input-text" class="input-default" placeholder="Type a message (Shift+Enter to add a new line)"></textarea>
       <div class="send"><button id="send-button" class="button-small pure-button pure-button-primary"><img src="send.svg" class="icon"> send</button></div>
     </div>

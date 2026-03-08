@@ -17,35 +17,21 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var debug, nostream, openrouter, cerebras, useWeather, useBrowser, usePython bool
+var debug, nostream, useWeather, useBrowser, usePython bool
 
 func main() {
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
-	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
+	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
-	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
-	flag.BoolVar(&cerebras, "cerebras", false, "use cerebras endpoint")
 	flag.BoolVar(&useWeather, "weather", false, "enable weather tool")
 	flag.BoolVar(&useBrowser, "browser", false, "enable browser tool")
 	flag.BoolVar(&usePython, "python", false, "enable python tool")
 	flag.Parse()
-
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
-	if api.Debug {
-		f, err := os.Create("debug.log")
-		if err == nil {
-			log.Info("writing debug trace to debug.log")
-			api.DebugTo = f
-		}
-	}
-	server := api.LlamaCpp
-	if openrouter {
-		server = api.OpenRouter
-	} else if cerebras {
-		server = api.Cerebras
-	}
+
+	server := api.VLLM
 	baseURL, modelName := api.DefaultModel(server)
 	log.Infof("connecting to %s %s", baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
@@ -54,10 +40,8 @@ func main() {
 	defer browse.Close()
 	defer pyexec.Stop()
 
-	req := openai.ChatCompletionNewParams{
-		Model: modelName,
-		Tools: api.ChatCompletionToolParams(tools),
-	}
+	cfg := api.DefaultConfig(tools...)
+	conv := api.NewConversation(cfg)
 
 	input := bufio.NewReader(os.Stdin)
 	ctx := context.Background()
@@ -69,20 +53,23 @@ func main() {
 		if err != nil {
 			break
 		}
-		req.Messages = append(req.Messages, openai.UserMessage(strings.TrimSpace(question)))
-		browse.Reset()
-		pyexec.Stop()
-		var message string
+		conv.Messages = append(conv.Messages, api.Message{Role: "user", Content: strings.TrimSpace(question)})
+		req, err := api.NewRequest(modelName, conv, tools...)
+		if err != nil {
+			log.Fatal(err)
+		}
+		var msgs []api.Message
 		if nostream {
-			message, err = api.ChatCompletion(ctx, client, req, server, printOutput, logStats, tools...)
+			msgs, err = api.ChatCompletion(ctx, client, req, printOutput, logStats, tools...)
 		} else {
-			message, err = api.ChatCompletionStream(ctx, client, req, server, printOutput, logStats, tools...)
+			msgs, err = api.ChatCompletionStream(ctx, client, req, printOutput, logStats, tools...)
 		}
 		if err == nil {
-			req.Messages = append(req.Messages, openai.AssistantMessage(message))
+			log.Debug(api.Pretty(msgs))
+			conv.Messages = append(conv.Messages, msgs...)
 		} else {
 			log.Error(err)
-			req.Messages = req.Messages[:len(req.Messages)-1]
+			conv.Messages = conv.Messages[:len(conv.Messages)-1]
 		}
 	}
 }
@@ -114,7 +101,7 @@ func initTools() (tools []api.ToolFunction, browse *browser.Browser, pyexec *pyt
 func printOutputFunc(browse *browser.Browser) api.CallbackFunc {
 	return func(channel, content string, index int, end bool) {
 		if index == 0 {
-			fmt.Printf("== %s ==\n", channel)
+			fmt.Printf("\n== %s ==\n", channel)
 		}
 		if end && browse != nil {
 			fmt.Println("== postprocessed ==")

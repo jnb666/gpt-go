@@ -40,21 +40,56 @@ function refreshChatList(model, list, currentID) {
 	}
 }
 
-function addMessage(chat, type, content, update, hidden) {
-	if (!update) {
-		const entry = newElement("li", "chat-item " + type, newElement("div", "msg"));
-		if (hidden) {
+function addMessage(chat, msg, showReasoning) {
+	if (msg.reasoning && msg.reasoning.trim()) {
+		if (!msg.update) {
+			extendMessageList(chat, msg.role, true, showReasoning);
+		}
+		addContent(chat, msg.reasoning);
+	}
+	if (msg.content && msg.content.trim()) {
+		if (!msg.update) {
+			extendMessageList(chat, msg.role, false, showReasoning);
+		}
+		addContent(chat, msg.content);
+	}
+}
+
+function extendMessageList(chat, role, isReasoning, showReasoning) {
+	var type = "final";
+	var skip = false;
+	if (role == "user") {
+		type = "user";
+	} else if (role == "tool" || isReasoning) {
+		type = "analysis";
+		const n = chat.querySelectorAll("li");
+		skip = (n.length > 0) && n[n.length-1].classList.contains("analysis");
+	}
+	if (skip) {
+		// add a new message part to the last message
+		const list = chat.getElementsByClassName("msg");
+		if (list.length == 0) {
+			console.error("chat update error: empty message list");
+			return;
+		}
+		list[list.length-1].appendChild(newElement("div", "msgpart"));
+	} else {
+		// add a new message to the list
+		const entry = newElement("li", "chat-item "+type, newElement("div", "msg", newElement("div", "msgpart")));
+		if (type == "analysis" && !showReasoning) {
 			entry.style.display = "none";
 		}
 		chat.appendChild(entry);
 	}
-	const nodes = chat.querySelectorAll("div.msg");
+}
+
+function addContent(chat, content) {
+	const nodes = chat.querySelectorAll("div.msgpart");
 	if (nodes.length == 0) {
 		console.error("chat update error: empty node list");
 		return;
 	}
-	const element = nodes[nodes.length - 1];
-	element.innerHTML = content;
+	nodes[nodes.length - 1].innerHTML = content;
 	scrollToEnd();
 }
 
@@ -63,7 +98,7 @@ function loadChat(chat, conv, showReasoning) {
 	chat.replaceChildren();
 	if (conv.messages) {
 		for (const msg of conv.messages) {
-			addMessage(chat, msg.type, msg.content, false, msg.type == "analysis" && !showReasoning);
+			addMessage(chat, msg, showReasoning);
 		}
 	}
 }
@@ -77,6 +112,7 @@ function refreshChat(chat, showReasoning) {
 
 function showConfigForm(on) {
 	document.getElementById("chat-list").style.display = (on) ? "none" : "block";
+	document.getElementById("input-box").style.display = (on) ? "none" : "block";
 	document.getElementById("config-page").style.display = (on) ? "block" : "none";	
 }
 
@@ -87,6 +123,13 @@ function showConfig(cfg) {
 	const radio = form.querySelectorAll(`input[name="reasoning"]`);
 	
 	form.system.value = cfg.system_prompt;
+	form.temperature.value = cfg.temperature;
+	form.top_p.value = cfg.top_p;
+	form.top_k.value = cfg.top_k;
+	form.presence_penalty.value = cfg.presence_penalty;
+	form.repetition_penalty.value = cfg.repetition_penalty;
+	form.disable_thinking.value = cfg.disable_thinking;
+
 	for (const el of radio) {
 		el.checked = (el.value == cfg.reasoning_effort);
 	}
@@ -132,6 +175,12 @@ function initFormControls(app) {
 		e.preventDefault();
 		const cfg = {
 			system_prompt: form.system.value,
+			temperature: parseFloat(form.temperature.value),
+			top_p: parseFloat(form.top_p.value),
+			top_k: parseInt(form.top_k.value),
+			presence_penalty: parseFloat(form.presence_penalty.value),
+			repetition_penalty: parseFloat(form.repetition_penalty.value),
+			disable_thinking: form.disable_thinking.checked,
 			reasoning_effort: "medium",
 			tools: []
 		};
@@ -218,9 +267,9 @@ function initInputTextbox(app) {
 		if (!app.showReasoning) {
 			refreshChat(app.chat, false);
 		}
-		addMessage(app.chat, "user", `<p>${msg}</p>`);
+		addMessage(app.chat, {role: "user", content: `<p>${msg}</p>`});
 		clearStats();
-		app.send({ action: "add", message: { type: "user", content: msg } });
+		app.send({ action: "add", message: { role: "user", content: msg } });
 		input.placeholder = "Type a message (Shift+Enter to add a new line)";
 	}
 
@@ -275,7 +324,7 @@ class App {
 	recv(resp) {
 		switch (resp.action) {
 			case "add":
-				addMessage(this.chat, resp.message.type, resp.message.content, resp.message.update);
+				addMessage(this.chat, resp.message, true);
 				if (resp.message.end && !this.showReasoning) {
 					refreshChat(app.chat, false);
 				}

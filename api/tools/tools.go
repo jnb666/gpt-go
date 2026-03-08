@@ -30,7 +30,7 @@ func Get(uri string, reply any, headers ...Header) (http.Header, error) {
 
 // HTTP post request for uri with JSON request and optional headers. Unmarshals JSON response into reply.
 func Post(uri string, request, reply any, headers ...Header) (http.Header, error) {
-	log.Debugf("Tools POST %s %+v", uri, request)
+	log.Debugf("Tools POST %s", uri)
 	body, err := json.Marshal(request)
 	if err != nil {
 		return nil, err

@@ -47,7 +47,9 @@ func Render(doc string) (string, error) {
 
 // Parsed Markdown content
 type Document struct {
+	BaseID     int
 	Title      string
+	Subtitle   string
 	URL        string
 	Links      []Link
 	Lines      []string
@@ -62,12 +64,12 @@ type Link struct {
 }
 
 // Format link with id, title and host if different from srcHost.
-func (l Link) Format(id int, srcHost string) string {
+func (l Link) Format(baseID, id int, srcHost string) string {
 	host := URLHost(l.URL)
-	if host != "" && host != srcHost {
-		return fmt.Sprintf("【%d†%s】(%s)", id, l.Title, l.URL)
+	if host != "" && srcHost != "" && host != srcHost {
+		return fmt.Sprintf("【%d†%s†%s】", baseID+id, l.Title, host)
 	} else {
-		return fmt.Sprintf("【%d†%s】", id, l.Title)
+		return fmt.Sprintf("【%d†%s】", baseID+id, l.Title)
 	}
 }
 
@@ -92,9 +94,9 @@ func URLBase(uri string) string {
 	return u.String()
 }
 
-// Parse source and replace links with 【<id>†<title>†<host>] format
-func QuoteLinks(source, url, title string, wrapColumn int) Document {
-	doc := Document{URL: url, Title: title, WrapColumn: wrapColumn}
+// Parse source and replace links with 【<id>†<title>†<host>】 format
+func QuoteLinks(source, url, title string, baseID, wrapColumn int) Document {
+	doc := Document{URL: url, Title: title, BaseID: baseID, WrapColumn: wrapColumn}
 
 	transformer := util.Prioritized(&linkTransformer{doc: &doc}, 0)
 	md := goldmark.New(
@@ -142,7 +144,7 @@ func (t *linkTransformer) Transform(node *ast.Document, reader text.Reader, pc p
 				repl = append(repl, linkNode{parent: n.Parent(), child: n})
 				return ast.WalkSkipChildren, nil
 			}
-			ref := link.Format(len(t.doc.Links), host)
+			ref := link.Format(t.doc.BaseID, len(t.doc.Links), host)
 			log.Debugf("%s - %s", ref, link.URL)
 			repl = append(repl, linkNode{parent: n.Parent(), child: n, text: ref})
 			t.doc.Links = append(t.doc.Links, link)
@@ -168,8 +170,8 @@ func (t *linkTransformer) Transform(node *ast.Document, reader text.Reader, pc p
 }
 
 // Render document as markdown formatted text with header and line numbers
-func (d *Document) Format(cursor, maxWords int) string {
-	log.Debugf("[%d] %s - %s", cursor, d.Title, d.URL)
+func (d *Document) Format(maxWords int) string {
+	log.Debugf(" %s - %s", d.Title, d.URL)
 	lines := len(d.Lines)
 	startLine := min(d.StartLine, lines)
 	endLine := lines
@@ -184,9 +186,12 @@ func (d *Document) Format(cursor, maxWords int) string {
 		}
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "[%d] %s\n", cursor, d.Title)
+	fmt.Fprintf(&b, "## %s\n", d.Title)
 	if d.URL != "" {
 		fmt.Fprintf(&b, "(%s)\n", d.URL)
+	}
+	if d.Subtitle != "" {
+		fmt.Fprintf(&b, "%s\n", d.Subtitle)
 	}
 	if endLine > startLine {
 		fmt.Fprintf(&b, "**viewing lines [%d - %d] of %d**\n\n", startLine+1, endLine, lines)

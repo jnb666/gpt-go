@@ -24,21 +24,23 @@ import (
 )
 
 type Options struct {
-	Timeout           time.Duration // Timeout for each goto request
-	MaxAge            time.Duration // Used cached response if age of request less than this
-	MaxSpeed          time.Duration // Minimum delay between requests from same host
-	CloseWait         time.Duration // Wait before closing context
-	WaitFor           time.Duration // Wait after load has completed
-	WaitUntil         playwright.WaitUntilState
-	Referer           string
-	Locale            string
-	Timezone          string
-	IgnoreHttpsErrors bool
-	Headless          bool
-	WithExtension     string
+	Timeout              time.Duration // Timeout for each goto request
+	MaxAge               time.Duration // Used cached response if age of request less than this
+	MaxSpeed             time.Duration // Minimum delay between requests from same host
+	CloseWait            time.Duration // Wait before closing context
+	WaitFor              time.Duration // Wait after load has completed
+	WaitUntil            playwright.WaitUntilState
+	Referer              string
+	Locale               string
+	Timezone             string
+	IgnoreHttpsErrors    bool
+	Headless             bool
+	CDPEndpoint          string
+	WithExtension        string
+	RemoveHiddenElements bool
 }
 
-func DefaultOptions(uri string) Options {
+func DefaultOptions() Options {
 	opts := Options{
 		Timeout:           15 * time.Second,
 		MaxAge:            8 * time.Hour,
@@ -49,21 +51,6 @@ func DefaultOptions(uri string) Options {
 		IgnoreHttpsErrors: true,
 		Headless:          true,
 	}
-	if uri != "" {
-		host := getHost(uri)
-		for _, domain := range cookieAddonDomains {
-			if host == domain || strings.HasSuffix(host, "."+domain) {
-				opts.WithExtension = "isdcac"
-				opts.WaitFor = cookieWaitDefault
-			}
-		}
-		for _, domain := range waitDomains {
-			if host == domain || strings.HasSuffix(host, "."+domain) {
-				opts.WaitFor = waitDefault
-			}
-		}
-	}
-
 	return opts
 }
 
@@ -72,24 +59,27 @@ type Browser struct {
 	playwright *playwright.Playwright
 	browser    playwright.Browser
 	cache      map[string]Response
+	opts       Options
 }
 
 // Load new firefox browser. If withOptions is set it can be used to override DefaultOptions. Will panic on error.
 func NewBrowser(withOptions ...func(*Options)) Browser {
 	log.Info("scrape: new browser")
 	var err error
-	opt := DefaultOptions("")
-	b := Browser{cache: map[string]Response{}}
+	b := Browser{cache: map[string]Response{}, opts: DefaultOptions()}
 	if len(withOptions) > 0 && withOptions[0] != nil {
-		withOptions[0](&opt)
+		withOptions[0](&b.opts)
 	}
+	log.Debugf("browser options: %+v", b.opts)
 	b.playwright, err = playwright.Run()
 	if err != nil {
 		panic(err)
 	}
-	b.browser, err = b.playwright.Firefox.Launch(playwright.BrowserTypeLaunchOptions{Headless: &opt.Headless})
-	if err != nil {
-		panic(err)
+	if b.opts.CDPEndpoint == "" {
+		b.browser, err = b.playwright.Firefox.Launch(playwright.BrowserTypeLaunchOptions{Headless: &b.opts.Headless})
+		if err != nil {
+			panic(err)
+		}
 	}
 	return b
 }
@@ -116,10 +106,19 @@ type Response struct {
 }
 
 // Scrape HTML content from given URL and convert to Markdown. referer is optional. If withOptions is specified it can be used to override the default options.
-func (b Browser) Scrape(uri string, withOptions ...func(*Options)) (r Response, err error) {
-	opt := DefaultOptions(uri)
-	if len(withOptions) > 0 && withOptions[0] != nil {
-		withOptions[0](&opt)
+func (b Browser) Scrape(uri string) (r Response, err error) {
+	opt := b.opts
+	host := getHost(uri)
+	for _, domain := range cookieAddonDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			opt.WithExtension = "isdcac"
+			opt.WaitFor = max(cookieWaitDefault, opt.WaitFor)
+		}
+	}
+	for _, domain := range waitDomains {
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			opt.WaitFor = max(waitDefault, opt.WaitFor)
+		}
 	}
 	log.Debugf("scrape options: %+v", opt)
 	if r, ok := b.cache[uri]; ok && r.Status == 200 && time.Since(r.Timestamp) < opt.MaxAge {
@@ -145,51 +144,69 @@ func (b Browser) Scrape(uri string, withOptions ...func(*Options)) (r Response, 
 func (b Browser) scrape(uri string, opt Options) (r Response, err error) {
 	var ctx playwright.BrowserContext
 	viewport := playwright.Size{Width: 1280 + rand.IntN(400), Height: 720 + rand.IntN(200)}
-	if opt.WithExtension == "" {
-		ctx, err = b.browser.NewContext(
-			playwright.BrowserNewContextOptions{
-				IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
-				Locale:            &opt.Locale,
-				TimezoneId:        &opt.Timezone,
-				Viewport:          &viewport,
-			})
-	} else {
-		channel := "chromium"
-		var userDataDir string
-		userDataDir, err = os.MkdirTemp("", "chromium_user_data")
+	var page playwright.Page
+	if opt.CDPEndpoint != "" {
+		b.browser, err = b.playwright.Chromium.ConnectOverCDP(opt.CDPEndpoint)
 		if err != nil {
 			return r, err
 		}
-		defer os.RemoveAll(userDataDir)
-		extension := opt.WithExtension
-		if !filepath.IsAbs(extension) {
-			extension = filepath.Join(extensionDir(), extension)
+		defer func() {
+			time.Sleep(opt.CloseWait)
+			b.browser.Close()
+		}()
+		page = b.browser.Contexts()[0].Pages()[0]
+		if page == nil {
+			page, err = b.browser.NewPage()
+			if err != nil {
+				return r, err
+			}
 		}
-		log.Debug("loading extension from ", extension)
-		ctx, err = b.playwright.Chromium.LaunchPersistentContext(userDataDir,
-			playwright.BrowserTypeLaunchPersistentContextOptions{
-				Headless:          &opt.Headless,
-				Channel:           &channel,
-				Args:              []string{"--disable-extensions-except=" + extension, "--load-extension=" + extension},
-				IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
-				Locale:            &opt.Locale,
-				TimezoneId:        &opt.Timezone,
-				Viewport:          &viewport,
-			})
+	} else {
+		if opt.WithExtension == "" {
+			ctx, err = b.browser.NewContext(
+				playwright.BrowserNewContextOptions{
+					IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
+					Locale:            &opt.Locale,
+					TimezoneId:        &opt.Timezone,
+					Viewport:          &viewport,
+				})
+		} else {
+			channel := "chromium"
+			var userDataDir string
+			userDataDir, err = os.MkdirTemp("", "chromium_user_data")
+			if err != nil {
+				return r, err
+			}
+			defer os.RemoveAll(userDataDir)
+			extension := opt.WithExtension
+			if !filepath.IsAbs(extension) {
+				extension = filepath.Join(extensionDir(), extension)
+			}
+			log.Debug("loading extension from ", extension)
+			ctx, err = b.playwright.Chromium.LaunchPersistentContext(userDataDir,
+				playwright.BrowserTypeLaunchPersistentContextOptions{
+					Headless:          &opt.Headless,
+					Channel:           &channel,
+					Args:              []string{"--disable-extensions-except=" + extension, "--load-extension=" + extension},
+					IgnoreHttpsErrors: &opt.IgnoreHttpsErrors,
+					Locale:            &opt.Locale,
+					TimezoneId:        &opt.Timezone,
+					Viewport:          &viewport,
+				})
+		}
+		if err != nil {
+			return r, fmt.Errorf("new browser context error: %w", err)
+		}
+		defer func() {
+			time.Sleep(opt.CloseWait)
+			ctx.Close()
+		}()
+		page, err = ctx.NewPage()
+		if err != nil {
+			return r, fmt.Errorf("new page error: %w", err)
+		}
+		page.AddInitScript(playwright.Script{Content: &stealthJS})
 	}
-	if err != nil {
-		return r, fmt.Errorf("new browser context error: %w", err)
-	}
-	defer func() {
-		time.Sleep(opt.CloseWait)
-		ctx.Close()
-	}()
-
-	page, err := ctx.NewPage()
-	if err != nil {
-		return r, fmt.Errorf("new page error: %w", err)
-	}
-	page.AddInitScript(playwright.Script{Content: &stealthJS})
 
 	page.Route("**/*", func(r playwright.Route) {
 		uri := r.Request().URL()
@@ -258,10 +275,12 @@ func getContent(page playwright.Page, opt Options) (content, title string, err e
 	if err != nil {
 		return
 	}
-	if removed, err := page.Evaluate(removeHiddenJS); err == nil {
-		content = removed.(string)
-	} else {
-		log.Warn(err)
+	if opt.RemoveHiddenElements {
+		if removed, err := page.Evaluate(removeHiddenJS); err == nil {
+			content = removed.(string)
+		} else {
+			log.Warn(err)
+		}
 	}
 	title, err = page.Title()
 	return

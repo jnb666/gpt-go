@@ -26,7 +26,7 @@ var (
 	Country            = "gb"
 	Language           = "en"
 	WrapColumn         = 120
-	MaxWords           = 300
+	MaxWords           = 500
 	FindMaxWords       = 150
 	BraveSearchURL     = "https://api.search.brave.com/res/v1/web/search"
 	MaxLinkTitleLength = 100
@@ -36,15 +36,16 @@ var (
 type Browser struct {
 	Docs        []markdown.Document
 	Cursor      int
+	BaseID      int
 	scaper      scrape.Browser
 	braveApiKey string
 	nextSearch  time.Time
 }
 
 // Create new browser instance
-func NewBrowser(braveApiKey string) *Browser {
+func NewBrowser(braveApiKey string, opts ...func(*scrape.Options)) *Browser {
 	return &Browser{
-		scaper:      scrape.NewBrowser(),
+		scaper:      scrape.NewBrowser(opts...),
 		braveApiKey: braveApiKey,
 	}
 }
@@ -61,7 +62,7 @@ func (b *Browser) Tools() []api.ToolFunction {
 // Reset saved document state
 func (b *Browser) Reset() {
 	if b != nil {
-		b.Cursor = 0
+		b.BaseID = 0
 		b.Docs = b.Docs[:0]
 	}
 }
@@ -95,18 +96,41 @@ func (s *Browser) Postprocess(content string) string {
 	})
 }
 
-func (b *Browser) current(cursor int) (doc markdown.Document, err error) {
-	if cursor >= 0 && cursor < len(b.Docs) {
-		return b.Docs[cursor], nil
+func (b *Browser) current() *markdown.Document {
+	if b.Cursor >= len(b.Docs) {
+		return nil
 	}
-	if b.Cursor >= 0 && b.Cursor < len(b.Docs) {
-		return b.Docs[b.Cursor], nil
+	return &b.Docs[b.Cursor]
+}
+
+func (b *Browser) get(url string) *markdown.Document {
+	for i, page := range b.Docs {
+		if page.URL == url {
+			b.Cursor = i
+			return &b.Docs[i]
+		}
 	}
-	return doc, fmt.Errorf("document at cursor %d not found", cursor)
+	return nil
+}
+
+func (b *Browser) getLink(id int) (l markdown.Link, ok bool) {
+	if id < 0 {
+		if doc := b.current(); doc != nil {
+			return markdown.Link{URL: doc.URL, Title: doc.Title}, true
+		}
+	} else {
+		for _, page := range b.Docs {
+			if id >= page.BaseID && id < page.BaseID+len(page.Links) {
+				return page.Links[id-page.BaseID], true
+			}
+		}
+	}
+	return
 }
 
 func (b *Browser) add(doc markdown.Document) {
 	b.Cursor = len(b.Docs)
+	b.BaseID += len(doc.Links)
 	b.Docs = append(b.Docs, doc)
 }
 
@@ -119,14 +143,16 @@ type Search struct {
 func (t Search) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name: "browser_search",
-		Description: openai.String("Searches the web for information related to `query` and displays `topn` results." +
-			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
-			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
+		Description: openai.String("Searches the web for information related to `query`." +
+			" Returns a list of up to 10 links each with the page id, title, url and a brief summary of the page." +
+			" Links are formatted as 【{id}†.*】 where id is the page id parameter to pass to the browser_open tool."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"query": map[string]any{"type": "string", "description": "Text to search for on the web."},
-				"topn":  map[string]any{"type": "number", "description": "Maximum number of results to return - default 10."},
+				"query": map[string]any{
+					"type":        "string",
+					"description": "Text to search for on the web.",
+				},
 			},
 			"required": []string{"query"},
 		},
@@ -138,9 +164,7 @@ func (t Search) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_search(%s)", len(t.Docs), arg)
 	var args struct {
 		Query string
-		TopN  float64
 	}
-	args.TopN = 10
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
 		return arg, "", err
 	}
@@ -148,25 +172,31 @@ func (t Search) Call(arg string) (req, res string, err error) {
 	if strings.TrimSpace(args.Query) == "" {
 		return req, errorResponse(fmt.Errorf("query argument is required")), nil
 	}
-	resp, err := t.search(args.Query, int(args.TopN))
+	url := fmt.Sprintf("https://search.brave.com/search?q=%s&source=web", url.QueryEscape(args.Query))
+	if doc := t.get(url); doc != nil {
+		log.Debugf("get %s from browser cache", url)
+		return req, doc.Format(0), nil
+	}
+	resp, err := t.search(args.Query, 10)
 	if err != nil {
 		return req, errorResponse(err), nil
 	}
 	doc := markdown.Document{
+		BaseID:     t.BaseID,
 		Title:      fmt.Sprintf("Web search for “%s”", args.Query),
-		URL:        fmt.Sprintf("https://search.brave.com/search?q=%s&source=web", url.QueryEscape(args.Query)),
+		URL:        url,
 		WrapColumn: WrapColumn,
 	}
 	doc.Write("# Search Results\n\n")
 	for i, r := range resp.Web.Results {
 		link := markdown.Link{URL: r.URL, Title: r.Title}
-		ref := link.Format(i, "")
-		log.Debugf("%s %s", ref, r.URL)
+		ref := link.Format(t.BaseID, i, "search.brave.com")
+		log.Debug(ref)
 		doc.Write("  * " + ref + "\n" + r.Description + "\n")
 		doc.Links = append(doc.Links, link)
 	}
 	t.add(doc)
-	return req, doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(0), nil
 }
 
 type searchResponse struct {
@@ -224,25 +254,20 @@ type Open struct {
 func (t Open) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name: "browser_open",
-		Description: openai.String("Opens the link `id` from the page indicated by `cursor` starting at line number `loc`." +
-			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
-			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
+		Description: openai.String("Opens a web page and returns the text content in Markdown format." +
+			" Links in the returned document are replaced with 【{id}†.*】 where id can be passed to a new call to browser_open to go to that page."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"cursor": map[string]any{
-					"type":        "number",
-					"description": "Identifies the current page. If not provided the most recent page is implied.",
-				},
 				"id": map[string]any{
 					"type": []string{"number", "string"},
-					"description": "If `id` is a number it is treated as a link id from the page given by `cursor`. Valid link ids are displayed with the formatting: `【{id}†.*】.`" +
-						"  If `id` is a string, it is treated as a fully qualified URL." +
-						"  Use this function without `id` to scroll to a new location of an opened page.",
+					"description": "If `id` is a number it is treated as a page id. If `id` is a string, it is treated as a fully qualified URL." +
+						" If not provided then `loc` can be used to scroll the current document.",
 				},
 				"loc": map[string]any{
 					"type":        "number",
-					"description": "Line number in the document at which to position the viewport - defaults to the start of the documnet if not provided."},
+					"description": "Line number in the document at which to position the viewport. Defaults to the start of the document if not provided.",
+				},
 			},
 		},
 	}
@@ -252,46 +277,47 @@ func (t Open) Definition() shared.FunctionDefinitionParam {
 func (t Open) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_open(%s)", len(t.Docs), arg)
 	var args struct {
-		Cursor float64
-		ID     any
-		Loc    float64
+		ID  any
+		Loc float64
 	}
-	args.Cursor = -1
 	args.Loc = -1
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
 		return arg, "", err
 	}
 	req = fmt.Sprintf("browser.open%+v", args)
-	var current, doc markdown.Document
 	id, url := parseID(args.ID)
-	log.Debugf("open %+v => id=%d url=%q", args, id, url)
-	if url != "" {
-		doc, err = t.scrape(url, "", "")
-	} else {
-		if current, err = t.current(int(args.Cursor)); err == nil {
-			if id >= 0 && id < len(current.Links) {
-				doc, err = t.scrape(current.Links[id].URL, current.Links[id].Title, current.URL)
-			} else {
-				doc = current
-			}
+	var title string
+	log.Debugf("open %+v => id=%d url=%q loc=%g", args, id, url, args.Loc)
+	if url == "" {
+		if l, ok := t.getLink(id); ok {
+			url, title = l.URL, l.Title
+		} else {
+			return req, errorResponse(fmt.Errorf("page id %d not found", id)), nil
 		}
 	}
+	if doc := t.get(url); doc != nil {
+		log.Debugf("get %s from browser cache", url)
+		doc.Subtitle = ""
+		if args.Loc > 0 {
+			doc.StartLine = int(args.Loc)
+		}
+		return req, doc.Format(0), nil
+	}
+	doc, err := t.scrape(url, title)
 	if err != nil {
 		log.Error(err)
 		return req, fmt.Sprintf("%s\n(%s)\n", err, doc.URL), nil
 	}
-	if args.Loc >= 0 {
+	if args.Loc > 0 {
 		doc.StartLine = int(args.Loc)
 	}
 	t.add(doc)
-	return req, doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(t.MaxWords), nil
 }
 
 // get markdown content for url and extract links from result
-func (t Open) scrape(url, title, referer string) (doc markdown.Document, err error) {
-	doc.URL = url
-	doc.Title = title
-	resp, err := t.scaper.Scrape(url) //, func(opt *scrape.Options) { opt.Referer = referer })
+func (t Open) scrape(url, title string) (doc markdown.Document, err error) {
+	resp, err := t.scaper.Scrape(url)
 	if err != nil {
 		return doc, err
 	}
@@ -300,7 +326,7 @@ func (t Open) scrape(url, title, referer string) (doc markdown.Document, err err
 	} else if resp.Title != "" {
 		title = resp.Title
 	}
-	doc = markdown.QuoteLinks(resp.Markdown, url, title, WrapColumn)
+	doc = markdown.QuoteLinks(resp.Markdown, url, title, t.BaseID, WrapColumn)
 	return doc, err
 }
 
@@ -314,15 +340,11 @@ func (t Find) Definition() shared.FunctionDefinitionParam {
 	return shared.FunctionDefinitionParam{
 		Name: "browser_find",
 		Description: openai.String("Finds exact matches of `pattern` in the current page, or the page given by `cursor`." +
-			" The `cursor` appears in brackets before each browsing display: `[{cursor}]`." +
-			" Cite information from the tool using the following format:【{cursor}†L{line_start}(-L{line_end})?】for example: `【6†L9-L11】` or `【8†L3】`."),
+			" If a match is found then returns the page scrolled to the first line containing that string." +
+			" Repeat the same browser_find call to scroll to the next match."),
 		Parameters: shared.FunctionParameters{
 			"type": "object",
 			"properties": map[string]any{
-				"cursor": map[string]any{
-					"type":        "number",
-					"description": "Identifies the current page. If not provided the most recent page is implied.",
-				},
 				"pattern": map[string]any{
 					"type":        "string",
 					"description": "Text to search for.",
@@ -340,9 +362,7 @@ func (t Find) Call(arg string) (req, res string, err error) {
 	// parse arguments
 	var args struct {
 		Pattern string
-		Cursor  float64
 	}
-	args.Cursor = -1
 	if err := json.Unmarshal([]byte(arg), &args); err != nil {
 		return arg, "", err
 	}
@@ -350,28 +370,23 @@ func (t Find) Call(arg string) (req, res string, err error) {
 	if strings.TrimSpace(args.Pattern) == "" {
 		return req, errorResponse(fmt.Errorf("pattern argument is required")), nil
 	}
-	current, err := t.current(int(args.Cursor))
-	if err != nil {
-		return req, errorResponse(err), nil
+	doc := t.current()
+	if doc == nil {
+		return req, errorResponse(fmt.Errorf("no current document to search")), nil
 	}
-	if m := reFind.FindStringSubmatch(current.Title); len(m) > 0 {
+	if doc.Subtitle != "" {
 		// search again in search page
-		current.Title = m[2]
-		if m[1] == args.Pattern {
-			current.StartLine++
-		}
+		doc.StartLine++
 	}
-	line := current.Find(args.Pattern)
-	doc := current
+	line := doc.Find(args.Pattern)
 	if line >= 0 {
-		doc.Title = fmt.Sprintf("Find results for “%s” in “%s”", args.Pattern, current.Title)
+		doc.Subtitle = fmt.Sprintf("Find results for “%s”", args.Pattern)
 		doc.StartLine = line
 	} else {
-		doc.Title = fmt.Sprintf("“%s” not found in page “%s”", args.Pattern, current.Title)
+		doc.Subtitle = fmt.Sprintf("“%s” not found", args.Pattern)
 		doc.StartLine = len(doc.Lines)
 	}
-	t.add(doc)
-	return req, doc.Format(t.Cursor, t.MaxWords), nil
+	return req, doc.Format(t.MaxWords), nil
 }
 
 func errorResponse(err error) string {
@@ -405,6 +420,8 @@ func parseID(param any) (id int, url string) {
 		id = int(val)
 	case int:
 		id = val
+	default:
+		id = -1
 	}
 	return
 }

@@ -1,3 +1,4 @@
+// Web based chat interface with tool calling
 package main
 
 import (
@@ -23,6 +24,7 @@ import (
 	"github.com/jnb666/gpt-go/api/tools/python"
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
+	"github.com/jnb666/gpt-go/scrape"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
@@ -38,37 +40,32 @@ var assets embed.FS
 var upgrader websocket.Upgrader
 
 var debug, nostream bool
-var apiServer = api.LlamaCpp
+var cdpEndpoint string
+var apiServer = api.VLLM
 
 func main() {
 	var server http.Server
-	var openrouter, cerebras bool
+	var endpoint int
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
-	flag.BoolVar(&api.Debug, "trace", false, "trace request and response messages")
+	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
-	flag.BoolVar(&openrouter, "openrouter", false, "use openrouter endpoint")
-	flag.BoolVar(&cerebras, "cerebras", false, "use cerebras endpoint")
+	flag.IntVar(&endpoint, "endpoint", int(apiServer), "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
 	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
+	flag.StringVar(&cdpEndpoint, "cdp", "", "connect to browser at this chrome dev tools endpoint if set")
 	flag.Parse()
 
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
 	if debug {
 		log.SetLevel(log.DebugLevel)
-	} else {
-		log.SetLevel(log.InfoLevel)
 	}
-	if api.Debug {
-		f, err := os.Create("debug.log")
+	if api.TraceRequests {
+		f, err := os.Create("trace.log")
 		if err == nil {
-			log.Info("writing debug trace to debug.log")
-			api.DebugTo = f
+			log.Info("writing debug trace to trace.log")
+			api.TraceTo = f
 		}
 	}
-	if openrouter {
-		apiServer = api.OpenRouter
-	} else if cerebras {
-		apiServer = api.Cerebras
-	}
+	apiServer = api.Server(endpoint)
 
 	http.Handle("/", fsHandler())
 	ctx, wsCancel := context.WithCancel(context.Background())
@@ -105,14 +102,16 @@ func main() {
 
 // connection state for websocket
 type Connection struct {
-	conn     *websocket.Conn
-	client   openai.Client
-	tools    []api.ToolFunction
-	browser  *browser.Browser
-	python   *python.Python
-	content  string
-	analysis string
-	first    bool
+	conn      *websocket.Conn
+	client    openai.Client
+	tools     []api.ToolFunction
+	browser   *browser.Browser
+	python    *python.Python
+	content   string
+	analysis  string
+	first     bool
+	maxTokens int
+	toolCalls int
 }
 
 type Message struct {
@@ -209,7 +208,14 @@ func initTools() (browse *browser.Browser, pyexec *python.Python, tools []api.To
 	pyexec = python.New()
 	tools = []api.ToolFunction{pyexec}
 	if apiKey := os.Getenv("BRAVE_API_KEY"); apiKey != "" {
-		browse = browser.NewBrowser(apiKey)
+		var opts func(*scrape.Options)
+		if cdpEndpoint != "" {
+			opts = func(o *scrape.Options) {
+				o.CDPEndpoint = cdpEndpoint
+				o.WaitFor = time.Second
+			}
+		}
+		browse = browser.NewBrowser(apiKey, opts)
 		tools = append(tools, browse.Tools()...)
 	} else {
 		log.Warn("skipping browser tools support - BRAVE_API_KEY env variable is not defined")
@@ -236,21 +242,25 @@ func (c *Connection) listChats(currentID string) error {
 
 // add new message from user to chat, get streaming response, returns updated message list
 func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model string) (api.Conversation, error) {
+	newChat := len(conv.Messages) == 0
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
-	req := api.NewRequest(model, conv, c.tools...)
+	req, err := api.NewRequest(model, conv, c.tools...)
+	if err != nil {
+		return conv, err
+	}
 	c.content = ""
 	c.analysis = ""
 	c.first = true
-	c.browser.Reset()
+	c.toolCalls = 0
 	c.python.Stop()
 
-	var err error
 	ctx := context.Background()
+	var msgs []api.Message
 	if nostream {
-		_, err = api.ChatCompletion(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
+		msgs, err = api.ChatCompletion(ctx, c.client, req, c.sendUpdate, c.updateStats, c.tools...)
 	} else {
-		_, err = api.ChatCompletionStream(ctx, c.client, req, apiServer, c.sendUpdate, c.updateStats, c.tools...)
+		msgs, err = api.ChatCompletionStream(ctx, c.client, req, c.sendUpdate, c.updateStats, c.tools...)
 	}
 	if err != nil {
 		return conv, err
@@ -259,12 +269,12 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 		c.content = c.browser.Postprocess(c.content)
 	}
 	c.sendUpdate("final", c.content, -1, true)
-	if c.analysis != "" {
-		conv.Messages = append(conv.Messages, api.Message{Type: "analysis", Content: c.analysis})
+	if log.GetLevel() >= log.DebugLevel {
+		log.Debug(api.Pretty(msgs))
 	}
-	conv.Messages = append(conv.Messages, api.Message{Type: "final", Content: c.content})
+	conv.Messages = append(conv.Messages, msgs...)
 	err = saveJSON(conv.ID, conv)
-	if err == nil && len(conv.Messages) <= 3 {
+	if err == nil && newChat {
 		err = c.listChats(conv.ID)
 	}
 	return conv, err
@@ -272,7 +282,11 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model st
 
 // update stats after each complete request
 func (c *Connection) updateStats(stats api.Stats) {
-	stats.Loginfo()
+	log.Info(stats.APICallInfo())
+	if stats.ToolCalls > c.toolCalls {
+		log.Info(stats.ToolCallInfo())
+		c.toolCalls = stats.ToolCalls
+	}
 	if err := c.conn.WriteJSON(api.Response{Action: "stats", Stats: stats}); err != nil {
 		log.Error(err)
 	}
@@ -283,15 +297,14 @@ func (c *Connection) sendUpdate(channel, text string, index int, end bool) {
 	r := api.Response{Action: "add"}
 	switch channel {
 	case "analysis":
-		r.Message.Type = "analysis"
+		r.Message.Role = "assistant"
 		r.Message.Update = c.analysis != ""
 		c.analysis += text
-		r.Message.Content = c.analysis
+		r.Message.Reasoning = toHTML(c.analysis, "assistant")
 	case "tool":
-		r.Message.Type = "analysis"
-		r.Message.Update = c.analysis != ""
-		c.analysis += `<pre><code class="tool-response">` + text + `</code></pre>`
-		r.Message.Content = c.analysis
+		r.Message.Role = "tool"
+		r.Message.Content = toHTML(text, "tool")
+		c.analysis = ""
 	case "final":
 		if end {
 			// always complete message
@@ -303,8 +316,9 @@ func (c *Connection) sendUpdate(channel, text string, index int, end bool) {
 				return
 			}
 		}
+		r.Message.Role = "assistant"
 		r.Message.Update = !c.first
-		r.Message.Content = toHTML(c.content, "final")
+		r.Message.Content = toHTML(c.content, "assistant")
 		r.Message.End = end
 		c.first = false
 	default:
@@ -320,6 +334,7 @@ func (c *Connection) sendUpdate(channel, text string, index int, end bool) {
 func (c *Connection) loadChat(id string, cfg api.Config) (conv api.Conversation, err error) {
 	log.Infof("load chat: id=%s", id)
 	if id != "" {
+		conv.Config = api.DefaultConfig(c.tools...)
 		if err = loadJSON(id, &conv); err != nil {
 			return conv, err
 		}
@@ -333,7 +348,9 @@ func (c *Connection) loadChat(id string, cfg api.Config) (conv api.Conversation,
 	}
 	resp := api.Response{Action: "load", Conversation: api.Conversation{ID: conv.ID}}
 	for _, msg := range conv.Messages {
-		resp.Conversation.Messages = append(resp.Conversation.Messages, api.Message{Type: msg.Type, Content: toHTML(msg.Content, msg.Type)})
+		msg.Content = toHTML(msg.Content, msg.Role)
+		msg.Reasoning = toHTML(msg.Reasoning, msg.Role)
+		resp.Conversation.Messages = append(resp.Conversation.Messages, msg)
 	}
 	err = c.conn.WriteJSON(resp)
 	return conv, err
@@ -358,6 +375,9 @@ func (c *Connection) configOptions(conv api.Conversation, cfg, update *api.Confi
 	var err error
 	if update == nil {
 		log.Info("get config")
+		if len(conv.Messages) == 0 {
+			conv.Config = *cfg
+		}
 		resp := api.Response{Action: "config", Config: conv.Config}
 		err = c.conn.WriteJSON(resp)
 	} else {
@@ -409,17 +429,15 @@ func fsHandler() http.Handler {
 	return http.FileServer(http.FS(sub))
 }
 
-// handler to log http requests
-func logRequestHandler(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h.ServeHTTP(w, r)
-		log.Printf("%s: %s", r.Method, r.URL)
-	})
-}
-
 // util functions
-func toHTML(content, msgType string) string {
-	if msgType == "final" || strings.Contains(content, "```") {
+func toHTML(content, role string) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	if role == "tool" {
+		return `<pre><code class="tool-response">` + content + `</code></pre>`
+	}
+	if role == "assistant" {
 		html, err := markdown.Render(content)
 		if err == nil {
 			return html
@@ -427,11 +445,7 @@ func toHTML(content, msgType string) string {
 			log.Error("error converting markdown:", err)
 		}
 	}
-	content = strings.ReplaceAll(content, "\n", "<br>")
-	if msgType != "analysis" {
-		return "<p>" + content + "</p>"
-	}
-	return content
+	return "<p>" + strings.ReplaceAll(content, "\n", "<br>") + "</p>"
 }
 
 func loadJSON(file string, v any) error {

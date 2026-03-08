@@ -10,21 +10,23 @@ import (
 	"net/http"
 	"os"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/param"
 	"github.com/openai/openai-go/v3/shared"
 	log "github.com/sirupsen/logrus"
 	"github.com/tidwall/pretty"
 )
 
 var (
-	Debug   = false
-	DebugTo = os.Stderr
+	// Optional logging of raw JSON requests and responses
+	TraceRequests = false
+	TraceStream   = false
+	TraceTo       = os.Stderr
+	// Change to reasoning_content for llama.cpp
+	ReasoningField = "reasoning"
 )
 
 func init() {
@@ -32,11 +34,13 @@ func init() {
 }
 
 const (
-	LlamaCpp   Server = 0
-	OpenRouter Server = 1
-	Cerebras   Server = 2
+	LlamaCPP   Server = 0
+	VLLM       Server = 1
+	OpenRouter Server = 2
+	Cerebras   Server = 3
 )
 
+// Endpoint to connect to
 type Server int
 
 // Interface implented by tools which can be called by the model.
@@ -59,7 +63,7 @@ func ChatCompletionToolParams(tools []ToolFunction) (params []openai.ChatComplet
 // Default model settings
 func DefaultModel(server Server) (baseURL, modelName string) {
 	switch server {
-	case LlamaCpp:
+	case LlamaCPP, VLLM:
 		baseURL = "http://deepthought:8080/v1"
 	case OpenRouter:
 		baseURL = "https://openrouter.ai/api/v1"
@@ -87,112 +91,116 @@ func GetContent(raw string) (content, reasoning string) {
 // index is the count of the message on the current stream, end is set on final message completion and full rather than delta content is sent
 type CallbackFunc func(channel, content string, index int, end bool)
 
-// Chat completion without streaming with optional function call support. The final assistant response content is returned along with usage and timing stats.
-// callback is called after each stage of generation - i.e. reasoning text, tool response and final response.
-func ChatCompletion(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, server Server, callback CallbackFunc, statsCallback func(Stats),
-	tools ...ToolFunction) (message string, err error) {
+// Chat completion without streaming with optional function call support. The list of new generated messages are returned.
+// callback and statsCallback are called after each stage of generation - i.e. reasoning text, tool response and final response.
+func ChatCompletion(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, callback CallbackFunc, statsCallback func(Stats),
+	tools ...ToolFunction) (msgs []Message, err error) {
 
 	stats := newStats()
 	req := request
 	req.Messages = slices.Clone(request.Messages)
 	var content, reasoning string
+	var message openai.ChatCompletionMessage
 	retries := 0
 	maxRetries := 3
 	for {
 		// submit request
-		opts := requestOptions(req, server, reasoning)
+		opts := requestOptions(&req, len(request.Messages)-1)
 		start := time.Now()
 		resp, err := client.Chat.Completions.New(ctx, req, opts...)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if len(resp.Choices) == 0 {
-			return "", getError(resp.RawJSON())
+			return nil, getError(resp.RawJSON())
 		}
 		stats.update(resp.Model, resp.Usage, start)
 		// parse response
-		choice := resp.Choices[0]
-		content, reasoning = GetContent(choice.Message.RawJSON())
-		if len(choice.Message.ToolCalls) == 0 {
-			if strings.TrimSpace(content) != "" {
+		message = resp.Choices[0].Message
+		content, reasoning = GetContent(message.RawJSON())
+		if isSet(reasoning) {
+			callback("analysis", reasoning, 0, true)
+		}
+		if len(message.ToolCalls) == 0 {
+			if isSet(content) {
+				message.Content = content
 				break
-			}
-			if retries >= maxRetries {
+			} else if retries >= maxRetries {
 				content = fmt.Sprintf("Error: giving up on request after %d retries", maxRetries)
 				break
+			} else {
+				retries++
+				log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
+				continue
 			}
 		}
-		// have tool call - call function and resend
-		req.Messages = append(req.Messages, choice.Message.ToParam())
-		for _, call := range choice.Message.ToolCalls {
+		retries = 0
+		// have tool calls - call function and resend
+		msgs = addMessage(assistantMessage(message, reasoning), &req, msgs)
+		for _, call := range message.ToolCalls {
 			toolID, toolResp := callTool(call, tools, &stats, callback)
-			req.Messages = append(req.Messages, openai.ToolMessage(toolResp, toolID))
+			msgs = addMessage(openai.ToolMessage(toolResp, toolID), &req, msgs)
 		}
 		if statsCallback != nil {
 			statsCallback(stats)
-		}
-		if len(choice.Message.ToolCalls) == 0 {
-			retries++
-			log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
-		} else {
-			retries = 0
 		}
 	}
 	callback("final", content+"\n", 0, true)
 	if statsCallback != nil {
 		statsCallback(stats)
 	}
-	return content, nil
+	msgs = addMessage(assistantMessage(message, reasoning), &req, msgs)
+	return msgs, nil
 }
 
-// As per ChatCompletion but will stream responses as they are generated generated
-func ChatCompletionStream(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, server Server, callback CallbackFunc, statsCallback func(Stats),
-	tools ...ToolFunction) (message string, err error) {
+// As per ChatCompletion but will stream responses as they are generated.
+func ChatCompletionStream(ctx context.Context, client openai.Client, request openai.ChatCompletionNewParams, callback CallbackFunc, statsCallback func(Stats),
+	tools ...ToolFunction) (msgs []Message, err error) {
 
 	stats := newStats()
 	req := request
 	req.Messages = slices.Clone(request.Messages)
 	req.StreamOptions = openai.ChatCompletionStreamOptionsParam{IncludeUsage: openai.Bool(true)}
 	var acc Accumulator
+	var message openai.ChatCompletionMessage
 	retries := 0
 	maxRetries := 3
 	for {
+		var err error
 		// submit streaming request
-		opts := requestOptions(req, server, acc.Reasoning)
+		opts := requestOptions(&req, len(request.Messages)-1)
 		start := time.Now()
 		acc, err = chatCompletionStream(ctx, client, req, opts, callback)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		stats.update(acc.Model, acc.Usage, start)
 		if len(acc.Choices) == 0 {
-			return "", getError(acc.RawJSON())
+			return nil, getError(acc.RawJSON())
 		}
 		// parse response
-		choice := acc.Choices[0]
-		if len(choice.Message.ToolCalls) == 0 {
-			if strings.TrimSpace(acc.Content) != "" {
+		message = acc.Choices[0].Message
+		if len(message.ToolCalls) == 0 {
+			if isSet(acc.Content) {
 				break
-			}
-			if retries >= maxRetries {
+			} else if retries >= maxRetries {
 				acc.Content = fmt.Sprintf("Error: giving up on request after %d retries", maxRetries)
 				break
+			} else {
+				retries++
+				log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
+				continue
 			}
 		}
+		retries = 0
 		// have tool call - call function and resend
-		req.Messages = append(req.Messages, choice.Message.ToParam())
-		for _, call := range choice.Message.ToolCalls {
+		msgs = addMessage(assistantMessage(message, acc.Reasoning), &req, msgs)
+		for _, call := range message.ToolCalls {
 			toolID, toolResp := callTool(call, tools, &stats, callback)
-			req.Messages = append(req.Messages, openai.ToolMessage(toolResp, toolID))
+			msgs = addMessage(openai.ToolMessage(toolResp, toolID), &req, msgs)
 		}
 		if statsCallback != nil {
 			statsCallback(stats)
-		}
-		if len(choice.Message.ToolCalls) == 0 {
-			retries++
-			log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
-		} else {
-			retries = 0
 		}
 	}
 	callback("final", "\n", acc.index, false)
@@ -200,7 +208,8 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 	if statsCallback != nil {
 		statsCallback(stats)
 	}
-	return acc.Content, nil
+	msgs = addMessage(assistantMessage(message, acc.Reasoning), &req, msgs)
+	return msgs, nil
 }
 
 // call tools, update stats and call callback with request and response text
@@ -237,7 +246,7 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 	channel := "analysis"
 	for stream.Next() {
 		chunk := stream.Current()
-		if Debug {
+		if TraceStream {
 			pprint("chunk", chunk.RawJSON())
 		}
 		acc.AddChunk(chunk)
@@ -250,11 +259,11 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 			content, reasoning := GetContent(chunk.Choices[0].Delta.RawJSON())
 			acc.Content += content
 			acc.Reasoning += reasoning
-			if strings.TrimSpace(reasoning) != "" {
+			if isSet(reasoning) {
 				callback(channel, reasoning, acc.index, false)
 				acc.index++
 			}
-			if strings.TrimSpace(content) != "" {
+			if isSet(content) {
 				if channel == "analysis" {
 					if acc.index > 0 {
 						callback(channel, "\n", acc.index, false)
@@ -271,28 +280,44 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 }
 
 // extra JSON fields to set in request
-func requestOptions(req openai.ChatCompletionNewParams, server Server, reasoning string) (opts []option.RequestOption) {
-	if reasoning != "" {
-		for i := len(req.Messages) - 1; i >= 0; i-- {
-			if req.Messages[i].OfAssistant != nil {
-				if param.IsOmitted(req.Messages[i].OfAssistant.Content) {
-					field := "reasoning"
-					if server == LlamaCpp {
-						field = "thinking"
-					}
-					opts = append(opts, option.WithJSONSet("messages."+strconv.Itoa(i)+"."+field, reasoning))
-				}
-				break
-			}
+func requestOptions(req *openai.ChatCompletionNewParams, firstMessageInThisTurn int) (opts []option.RequestOption) {
+	for key, val := range req.ExtraFields() {
+		opts = append(opts, option.WithJSONSet(key, val))
+	}
+	for i, msg := range req.Messages[firstMessageInThisTurn:] {
+		for key, val := range msg.ExtraFields() {
+			opts = append(opts, option.WithJSONSet(fmt.Sprintf("messages.%d.%s", firstMessageInThisTurn+i, key), val))
 		}
 	}
-	if server == LlamaCpp && req.ReasoningEffort != "" {
-		opts = append(opts, option.WithJSONSet("chat_template_kwargs", map[string]any{"reasoning_effort": req.ReasoningEffort}))
+	kwargs := map[string]any{}
+	if req.ReasoningEffort == "none" {
+		kwargs["enable_thinking"] = false
+		req.ReasoningEffort = ""
+	} else if req.ReasoningEffort != "" {
+		kwargs["reasoning_effort"] = req.ReasoningEffort
 	}
-	if Debug {
+	if len(kwargs) > 0 {
+		opts = append(opts, option.WithJSONSet("chat_template_kwargs", kwargs))
+	}
+	if TraceRequests {
 		opts = append(opts, option.WithMiddleware(debugLogger))
 	}
 	return opts
+}
+
+// format returned assistant message to add to message list
+func assistantMessage(msg openai.ChatCompletionMessage, reasoning string) openai.ChatCompletionMessageParamUnion {
+	msg.Content = trim(msg.Content)
+	r := msg.ToParam()
+	if isSet(reasoning) {
+		r.SetExtraFields(map[string]any{ReasoningField: trim(reasoning)})
+	}
+	return r
+}
+
+func addMessage(msg openai.ChatCompletionMessageParamUnion, req *openai.ChatCompletionNewParams, msgs []Message) []Message {
+	req.Messages = append(req.Messages, msg)
+	return append(msgs, ToMessage(msg))
 }
 
 // utilities
@@ -320,7 +345,7 @@ func pprint(title string, value any) io.ReadCloser {
 	default:
 		panic(fmt.Errorf("invalid type: %T", value))
 	}
-	fmt.Fprintf(DebugTo, "== %s ==\n%s\n", title, pretty.Pretty(data))
+	fmt.Fprintf(TraceTo, "== %s ==\n%s\n", title, pretty.Pretty(data))
 	return io.NopCloser(bytes.NewBuffer(data))
 }
 
@@ -332,4 +357,12 @@ func getError(rawJSON string) error {
 	v := errorResponse{Code: 500, Message: "server error"}
 	json.Unmarshal([]byte(rawJSON), &v)
 	return fmt.Errorf("error %d: %s", v.Code, v.Message)
+}
+
+func isSet(s string) bool {
+	return trim(s) != ""
+}
+
+func trim(s string) string {
+	return strings.TrimSpace(s)
 }
