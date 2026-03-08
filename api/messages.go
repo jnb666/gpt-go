@@ -151,6 +151,16 @@ func NewConversation(cfg Config) Conversation {
 	}
 }
 
+// Most recent non-excluded user message number or -1 if not found
+func (c Conversation) LastUserMessageNumber() int {
+	for i := len(c.Messages) - 1; i >= 0; i-- {
+		if m := c.Messages[i]; !m.Excluded && m.Role == "user" {
+			return i
+		}
+	}
+	return -1
+}
+
 // Convert from openai chat completion message to our message format
 func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
 	var msg Message
@@ -180,13 +190,15 @@ func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
 }
 
 // Convert our message format to openai chat completion struct
-func FromMessage(m Message) (msg openai.ChatCompletionMessageParamUnion, err error) {
+func FromMessage(m Message, includeReasoning bool) (msg openai.ChatCompletionMessageParamUnion, err error) {
 	switch m.Role {
 	case "user":
 		return openai.UserMessage(m.Content), nil
 	case "assistant":
 		msg = openai.AssistantMessage(m.Content)
-		msg.SetExtraFields(map[string]any{ReasoningField: m.Reasoning})
+		if includeReasoning && isSet(m.Reasoning) {
+			msg.OfAssistant.SetExtraFields(map[string]any{ReasoningField: m.Reasoning})
+		}
 		if len(m.ToolCall) != 0 {
 			err = json.Unmarshal(m.ToolCall, &msg.OfAssistant.ToolCalls)
 		}
@@ -199,6 +211,7 @@ func FromMessage(m Message) (msg openai.ChatCompletionMessageParamUnion, err err
 }
 
 // Create a new chat completion request with given config settings. Messages with Excluded set are omitted from the request.
+// Includes reasoning content starting from the beginning of the latest turn.
 func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionNewParams, err error) {
 	cfg := conv.Config
 	extra := map[string]any{}
@@ -230,9 +243,10 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 		}
 	}
 	req.Tools = ChatCompletionToolParams(enabledTools)
-	for _, m := range conv.Messages {
+	reasoningFrom := conv.LastUserMessageNumber()
+	for i, m := range conv.Messages {
 		if !m.Excluded {
-			msg, err := FromMessage(m)
+			msg, err := FromMessage(m, i >= reasoningFrom)
 			if err != nil {
 				return req, err
 			}

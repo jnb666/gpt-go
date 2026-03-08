@@ -42,6 +42,7 @@ var upgrader websocket.Upgrader
 var debug, nostream bool
 var cdpEndpoint string
 var apiServer = api.VLLM
+var contextThreshold = 0.85
 
 func main() {
 	var server http.Server
@@ -52,6 +53,7 @@ func main() {
 	flag.IntVar(&endpoint, "endpoint", int(apiServer), "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
 	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
 	flag.StringVar(&cdpEndpoint, "cdp", "", "connect to browser at this chrome dev tools endpoint if set")
+	flag.Float64Var(&contextThreshold, "context", contextThreshold, "limit context size to this fraction of total available")
 	flag.Parse()
 
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
@@ -146,7 +148,7 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		}
 		log.Debugf("initial config: %#v", cfg)
 
-		err = c.handleWebsocket(ctx, cfg, modelName)
+		err = c.handleWebsocket(ctx, cfg, baseURL, modelName)
 		if err != nil {
 			log.Warn(err)
 		} else {
@@ -174,7 +176,7 @@ func readMsg(ctx context.Context, ch chan Message) (req api.Request, err error) 
 	}
 }
 
-func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, model string) error {
+func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, baseURL, model string) error {
 	conv := api.NewConversation(cfg)
 	ch := make(chan Message)
 	go pollWebsocket(c.conn, ch)
@@ -187,7 +189,7 @@ func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, model 
 		case "list":
 			err = c.listChats(conv.ID)
 		case "add":
-			conv, err = c.addMessage(conv, req.Message, model)
+			conv, err = c.addMessage(conv, req.Message, baseURL, model)
 		case "load":
 			conv, err = c.loadChat(req.ID, cfg)
 		case "delete":
@@ -241,11 +243,21 @@ func (c *Connection) listChats(currentID string) error {
 }
 
 // add new message from user to chat, get streaming response, returns updated message list
-func (c *Connection) addMessage(conv api.Conversation, msg api.Message, model string) (api.Conversation, error) {
+func (c *Connection) addMessage(conv api.Conversation, msg api.Message, baseURL, model string) (api.Conversation, error) {
 	newChat := len(conv.Messages) == 0
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
-	req, err := api.NewRequest(model, conv, c.tools...)
+	var req openai.ChatCompletionNewParams
+	var err error
+	if apiServer == api.VLLM && contextThreshold > 0 && contextThreshold < 1 {
+		req, err = api.CompactMessages(apiServer, baseURL, model, conv, c.tools, contextThreshold)
+		if err != nil {
+			log.Error("Error compacting messages:", err)
+			req, err = api.NewRequest(model, conv, c.tools...)
+		}
+	} else {
+		req, err = api.NewRequest(model, conv, c.tools...)
+	}
 	if err != nil {
 		return conv, err
 	}

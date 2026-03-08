@@ -281,14 +281,6 @@ func chatCompletionStream(ctx context.Context, client openai.Client, req openai.
 
 // extra JSON fields to set in request
 func requestOptions(req *openai.ChatCompletionNewParams, firstMessageInThisTurn int) (opts []option.RequestOption) {
-	for key, val := range req.ExtraFields() {
-		opts = append(opts, option.WithJSONSet(key, val))
-	}
-	for i, msg := range req.Messages[firstMessageInThisTurn:] {
-		for key, val := range msg.ExtraFields() {
-			opts = append(opts, option.WithJSONSet(fmt.Sprintf("messages.%d.%s", firstMessageInThisTurn+i, key), val))
-		}
-	}
 	kwargs := map[string]any{}
 	if req.ReasoningEffort == "none" {
 		kwargs["enable_thinking"] = false
