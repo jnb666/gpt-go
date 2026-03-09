@@ -149,7 +149,7 @@ func ChatCompletion(ctx context.Context, client openai.Client, request openai.Ch
 				break
 			} else {
 				retries++
-				log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
+				log.Warnf("no message content or tool call - retry %d/%d reasoning=%q", retries, maxRetries, reasoning)
 				continue
 			}
 		}
@@ -207,7 +207,7 @@ func ChatCompletionStream(ctx context.Context, client openai.Client, request ope
 				break
 			} else {
 				retries++
-				log.Warnf("no message content or tool call - retry %d/%d", retries, maxRetries)
+				log.Warnf("no message content or tool call - retry %d/%d reasoning=%q", retries, maxRetries, acc.Reasoning)
 				continue
 			}
 		}
