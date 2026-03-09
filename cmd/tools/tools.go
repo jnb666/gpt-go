@@ -17,12 +17,15 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var debug, nostream, useWeather, useBrowser, usePython bool
+var useWeather, useBrowser, usePython bool
 
 func main() {
+	var debug, nostream bool
+	var endpoint int
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
+	flag.IntVar(&endpoint, "endpoint", 0, "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
 	flag.BoolVar(&useWeather, "weather", false, "enable weather tool")
 	flag.BoolVar(&useBrowser, "browser", false, "enable browser tool")
 	flag.BoolVar(&usePython, "python", false, "enable python tool")
@@ -31,9 +34,9 @@ func main() {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	server := api.VLLM
+	server := api.Server(endpoint)
 	baseURL, modelName := api.DefaultModel(server)
-	log.Infof("connecting to %s %s", baseURL, modelName)
+	log.Infof("connecting %s to %s %s", server, baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
 	tools, browse, pyexec := initTools()

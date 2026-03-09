@@ -17,19 +17,21 @@ import (
 func main() {
 	var debug, nostream bool
 	var systemPrompt, reasoning string
+	var endpoint int
 	flag.StringVar(&reasoning, "reasoning", "medium", "set reasoning - none, low, medium or high")
 	flag.StringVar(&systemPrompt, "system", "", "set custom system prompt")
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
+	flag.IntVar(&endpoint, "endpoint", 0, "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
 	flag.Parse()
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	server := api.VLLM
+	server := api.Server(endpoint)
 	baseURL, modelName := api.DefaultModel(server)
-	log.Infof("connecting to %s %s", baseURL, modelName)
+	log.Infof("connecting to %s at %s %s", server, baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
 	cfg := api.DefaultConfig()

@@ -20,6 +20,8 @@ import (
 	"github.com/tidwall/pretty"
 )
 
+//go:generate stringer -type Server
+
 var (
 	// Optional logging of raw JSON requests and responses
 	TraceRequests = false
@@ -63,7 +65,10 @@ func ChatCompletionToolParams(tools []ToolFunction) (params []openai.ChatComplet
 // Default model settings
 func DefaultModel(server Server) (baseURL, modelName string) {
 	switch server {
-	case LlamaCPP, VLLM:
+	case LlamaCPP:
+		baseURL = "http://deepthought:8080/v1"
+		ReasoningField = "reasoning_content"
+	case VLLM:
 		baseURL = "http://deepthought:8080/v1"
 	case OpenRouter:
 		baseURL = "https://openrouter.ai/api/v1"

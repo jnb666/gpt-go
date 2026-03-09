@@ -13,7 +13,14 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var DefaultSystemMessage = "You are a helpful assistant. You should answer concisely unless more detail is requested. The current date is {{today}}."
+var (
+	// Used by DefaultConfig
+	DefaultSystemMessage = "You are a helpful assistant. You should answer concisely unless more detail is requested. The current date is {{today}}."
+	// Change to reasoning_content for llama.cpp - set by DefaultModel
+	ReasoningField = "reasoning"
+	// Used by NewRequest
+	ParallelToolCalls = true
+)
 
 // Chat API request from frontend to webserver
 type Request struct {
@@ -234,7 +241,9 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 		req.Messages = append(req.Messages, parseSystemPrompt(cfg.SystemPrompt))
 	}
 	req.SetExtraFields(extra)
-
+	if ParallelToolCalls {
+		req.ParallelToolCalls = openai.Bool(true)
+	}
 	var enabledTools []ToolFunction
 	for _, tool := range tools {
 		def := tool.Definition()
