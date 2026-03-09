@@ -27,8 +27,6 @@ var (
 	TraceRequests = false
 	TraceStream   = false
 	TraceTo       = os.Stderr
-	// Change to reasoning_content for llama.cpp
-	ReasoningField = "reasoning"
 )
 
 func init() {

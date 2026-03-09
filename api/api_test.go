@@ -49,12 +49,13 @@ func TestRequestSimple(t *testing.T) {
 			{"role": "assistant", "content": "Hello! How can I help you today?"},
 			{"role": "user", "content": "How many r's are there in Strawberry?"},
 		},
-		"temperature":        cfg.Temperature,
-		"top_p":              cfg.TopP,
-		"top_k":              cfg.TopK,
-		"presence_penalty":   cfg.PresencePenalty,
-		"repetition_penalty": cfg.RepetitionPenalty,
-		"reasoning_effort":   cfg.ReasoningEffort,
+		"temperature":         cfg.Temperature,
+		"top_p":               cfg.TopP,
+		"top_k":               cfg.TopK,
+		"presence_penalty":    cfg.PresencePenalty,
+		"repetition_penalty":  cfg.RepetitionPenalty,
+		"reasoning_effort":    cfg.ReasoningEffort,
+		"parallel_tool_calls": api.ParallelToolCalls,
 	}
 	assert.JSONEq(t, toJSON(expect), toJSON(req))
 }
@@ -86,13 +87,14 @@ func TestRequestWithTools(t *testing.T) {
 			},
 			{"role": "tool", "content": "Current weather for London,GB: 9°C - mist, feels like 7°C, wind 3.6m/s", "tool_call_id": "call_f5fc4884ea3348a9b38d3bf6"},
 		},
-		"temperature":        cfg.Temperature,
-		"top_p":              cfg.TopP,
-		"top_k":              cfg.TopK,
-		"presence_penalty":   cfg.PresencePenalty,
-		"repetition_penalty": cfg.RepetitionPenalty,
-		"reasoning_effort":   cfg.ReasoningEffort,
-		"tools":              api.ChatCompletionToolParams(tools),
+		"temperature":         cfg.Temperature,
+		"top_p":               cfg.TopP,
+		"top_k":               cfg.TopK,
+		"presence_penalty":    cfg.PresencePenalty,
+		"repetition_penalty":  cfg.RepetitionPenalty,
+		"reasoning_effort":    cfg.ReasoningEffort,
+		"parallel_tool_calls": api.ParallelToolCalls,
+		"tools":               api.ChatCompletionToolParams(tools),
 	}
 	assert.JSONEq(t, toJSON(expect), toJSON(req))
 }
