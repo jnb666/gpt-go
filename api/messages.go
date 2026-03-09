@@ -41,9 +41,10 @@ type Response struct {
 }
 
 type Conversation struct {
-	ID       string    `json:"id"`
-	Config   Config    `json:"config"`
-	Messages []Message `json:"messages"`
+	ID        string    `json:"id"`
+	Config    Config    `json:"config"`
+	Messages  []Message `json:"messages"`
+	NumTokens int       `json:"num_tokens"`
 }
 
 type Message struct {

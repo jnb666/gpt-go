@@ -41,7 +41,7 @@ var upgrader websocket.Upgrader
 
 var debug, nostream bool
 var cdpEndpoint string
-var apiServer = api.VLLM
+var apiServer = api.GetServer()
 var contextThreshold = 0.85
 
 func main() {
@@ -112,7 +112,7 @@ type Connection struct {
 	content   string
 	analysis  string
 	first     bool
-	maxTokens int
+	numTokens int
 	toolCalls int
 }
 
@@ -132,7 +132,7 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		defer conn.Close()
 
 		baseURL, modelName := api.DefaultModel(apiServer)
-		log.Infof("connecting to %s %s", baseURL, modelName)
+		log.Infof("connecting to %s at %s %s", apiServer, baseURL, modelName)
 		c := &Connection{
 			conn:   conn,
 			client: openai.NewClient(option.WithBaseURL(baseURL)),
@@ -247,17 +247,12 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, baseURL,
 	newChat := len(conv.Messages) == 0
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
-	var req openai.ChatCompletionNewParams
-	var err error
-	if apiServer == api.VLLM && contextThreshold > 0 && contextThreshold < 1 {
-		req, err = api.CompactMessages(apiServer, baseURL, model, conv, c.tools, contextThreshold)
-		if err != nil {
-			log.Error("Error compacting messages:", err)
-			req, err = api.NewRequest(model, conv, c.tools...)
-		}
-	} else {
-		req, err = api.NewRequest(model, conv, c.tools...)
+
+	err := api.CompactMessages(apiServer, baseURL, conv, contextThreshold)
+	if err != nil {
+		return conv, err
 	}
+	req, err := api.NewRequest(model, conv, c.tools...)
 	if err != nil {
 		return conv, err
 	}
@@ -285,6 +280,7 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, baseURL,
 		log.Debug(api.Pretty(msgs))
 	}
 	conv.Messages = append(conv.Messages, msgs...)
+	conv.NumTokens = c.numTokens
 	err = saveJSON(conv.ID, conv)
 	if err == nil && newChat {
 		err = c.listChats(conv.ID)
@@ -299,6 +295,7 @@ func (c *Connection) updateStats(stats api.Stats) {
 		log.Info(stats.ToolCallInfo())
 		c.toolCalls = stats.ToolCalls
 	}
+	c.numTokens = stats.PromptTokens + stats.CompletionTokens
 	if err := c.conn.WriteJSON(api.Response{Action: "stats", Stats: stats}); err != nil {
 		log.Error(err)
 	}

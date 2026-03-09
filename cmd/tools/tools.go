@@ -36,7 +36,7 @@ func main() {
 
 	server := api.Server(endpoint)
 	baseURL, modelName := api.DefaultModel(server)
-	log.Infof("connecting %s to %s %s", server, baseURL, modelName)
+	log.Infof("connecting to %s at %s %s", server, baseURL, modelName)
 	client := openai.NewClient(option.WithBaseURL(baseURL))
 
 	tools, browse, pyexec := initTools()

@@ -60,6 +60,22 @@ func ChatCompletionToolParams(tools []ToolFunction) (params []openai.ChatComplet
 	return params
 }
 
+// Get current server from LLM_SERVER env if set
+func GetServer() Server {
+	switch strings.ToLower(os.Getenv("LLM_SERVER")) {
+	case "llamacpp":
+		return LlamaCPP
+	case "vllm":
+		return VLLM
+	case "openrouter":
+		return OpenRouter
+	case "cerebras":
+		return Cerebras
+	default:
+		return -1
+	}
+}
+
 // Default model settings
 func DefaultModel(server Server) (baseURL, modelName string) {
 	switch server {
