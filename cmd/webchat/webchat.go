@@ -42,7 +42,7 @@ var upgrader websocket.Upgrader
 var debug, nostream bool
 var cdpEndpoint string
 var apiServer = api.GetServer()
-var contextThreshold = 0.85
+var contextThreshold = 0.80
 
 func main() {
 	var server http.Server

@@ -26,7 +26,7 @@ var (
 	Country            = "gb"
 	Language           = "en"
 	WrapColumn         = 120
-	MaxWords           = 500
+	MaxWords           = 250
 	FindMaxWords       = 150
 	BraveSearchURL     = "https://api.search.brave.com/res/v1/web/search"
 	MaxLinkTitleLength = 100
