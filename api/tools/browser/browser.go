@@ -317,7 +317,7 @@ func (t Open) Call(arg string) (req, res string, err error) {
 		if args.Loc > 0 {
 			doc.StartLine = int(args.Loc)
 		}
-		return req, doc.Format(0), nil
+		return req, doc.Format(MaxWords), nil
 	}
 	doc, err := t.scrape(url, title)
 	if err != nil {
