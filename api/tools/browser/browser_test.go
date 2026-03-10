@@ -109,7 +109,7 @@ func TestFind(t *testing.T) {
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://blog.n8n.io/local-llm/"}))
 	t.Logf("open response:\n%s", resp)
 
-	find := Find{Browser: open.Browser}
+	find := Find{Browser: browser}
 	for range 3 {
 		_, resp, _ = find.Call(marshal(map[string]any{"pattern": "video ram"}))
 		t.Logf("find response:\n%s", resp)

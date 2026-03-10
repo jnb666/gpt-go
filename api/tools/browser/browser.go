@@ -43,11 +43,6 @@ type Browser struct {
 	nextSearch  time.Time
 }
 
-type browserState struct {
-	Tool string         `json:"tool"`
-	Data map[int]string `json:"data"`
-}
-
 // Create new browser instance
 func NewBrowser(braveApiKey string, opts ...func(*scrape.Options)) *Browser {
 	return &Browser{
@@ -372,8 +367,6 @@ func (t Find) Definition() shared.FunctionDefinitionParam {
 		},
 	}
 }
-
-var reFind = regexp.MustCompile(`^Find results for “(.+?)” in “(.+?)”`)
 
 func (t Find) Call(arg string) (req, res string, err error) {
 	log.Infof("[%d] browser_find(%s)", len(t.docs), arg)

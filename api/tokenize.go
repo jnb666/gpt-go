@@ -66,7 +66,7 @@ func excludeTurnAt(start, end int, msgs []Message) (excluded []openai.ChatComple
 		msgs[i].Excluded = true
 		excluded = append(excluded, FromMessage(msgs[i], ""))
 	}
-	return nil, fmt.Errorf("ExcludeOldMessages: exceeded limit but no more messages to exclude!")
+	return nil, fmt.Errorf("ExcludeOldMessages: exceeded limit but no more messages to exclude")
 }
 
 // Get max content length for current model

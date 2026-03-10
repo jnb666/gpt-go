@@ -82,11 +82,11 @@ func (c *Python) Call(input string) (code, resp string, err error) {
 		Code string
 	}
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
-		return code, "", fmt.Errorf(`Error: invalid argument syntax - expecting {"code": ".. python code ..")`)
+		return code, "", fmt.Errorf(`error: invalid argument syntax - expecting {"code": ".. python code ..")`)
 	}
 	code = args.Code
 	if strings.TrimSpace(code) == "" {
-		return input, "", fmt.Errorf(`Error: python code missing - expecting {"code": ".. python code ..")`)
+		return input, "", fmt.Errorf(`error: python code missing - expecting {"code": ".. python code ..")`)
 	}
 	log.Info("Calling python tool")
 	log.Debug(code)

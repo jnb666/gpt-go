@@ -106,7 +106,7 @@ func NewClient(server Server, opts ...option.RequestOption) (c Client, err error
 	log.Infof("connecting to %s at %s %s", server, c.BaseURL, c.ModelName)
 	c.Client = openai.NewClient(opts...)
 	c.ContextLength, err = MaxModelLength(server, c.BaseURL)
-	return c, nil
+	return c, err
 }
 
 // Get content and reasoning content from raw JSON message
