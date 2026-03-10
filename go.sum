@@ -90,6 +90,8 @@ github.com/hexops/gotextdiff v1.0.3 h1:gitA9+qJrrTCsiCl7+kh75nPqQt1cx4ZkudSTLoUq
 github.com/hexops/gotextdiff v1.0.3/go.mod h1:pSWU5MAI3yDq+fZBTazCSJysOMbxWL1BSow5/V2vxeg=
 github.com/jnb666/goldmark-katex v0.0.0-20250929142231-12ded7f9ddf6 h1:vA2UsUTm8jQwdKN93jcTrKfvf6hX5BCleuhFP0oZPpY=
 github.com/jnb666/goldmark-katex v0.0.0-20250929142231-12ded7f9ddf6/go.mod h1:sdZnsOatxG2UhxvRHAedyFffGphEWlZ7NEvSahYaG+w=
+github.com/jnb666/goldmark-katex v0.0.0-20260310185541-b6cc24cbf0c4 h1:1z4vUb+P11xJRx+GbyIu1kxg4q8SxjYS6gKYEKIl7rs=
+github.com/jnb666/goldmark-katex v0.0.0-20260310185541-b6cc24cbf0c4/go.mod h1:sdZnsOatxG2UhxvRHAedyFffGphEWlZ7NEvSahYaG+w=
 github.com/klauspost/compress v1.18.4 h1:RPhnKRAQ4Fh8zU2FY/6ZFDwTVTxgJ/EMydqSTzE9a2c=
 github.com/klauspost/compress v1.18.4/go.mod h1:R0h/fSBs8DE4ENlcrlib3PsXS61voFxhIs2DeRhCvJ4=
 github.com/kr/pretty v0.3.1 h1:flRD4NNwYAUpkphVc1HcthR4KEIFJ65n8Mw5qdRn3LE=

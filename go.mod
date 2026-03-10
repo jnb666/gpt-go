@@ -8,7 +8,7 @@ require (
 	github.com/docker/go-sdk/container v0.1.0-alpha013
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/jnb666/goldmark-katex v0.0.0-20250929142231-12ded7f9ddf6
+	github.com/jnb666/goldmark-katex v0.0.0-20260310185541-b6cc24cbf0c4
 	github.com/moby/moby/api v1.53.0
 	github.com/openai/openai-go/v3 v3.24.0
 	github.com/playwright-community/playwright-go v0.5700.1
