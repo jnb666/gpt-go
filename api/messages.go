@@ -39,10 +39,11 @@ type Response struct {
 }
 
 type Conversation struct {
-	ID        string    `json:"id"`
-	Config    Config    `json:"config"`
-	Messages  []Message `json:"messages"`
-	NumTokens int       `json:"num_tokens"`
+	ID        string                     `json:"id"`
+	Config    Config                     `json:"config"`
+	Messages  []Message                  `json:"messages"`
+	NumTokens int                        `json:"num_tokens"`
+	ToolData  map[string]json.RawMessage `json:"tool_data,omitzero"`
 }
 
 type Message struct {
@@ -154,8 +155,9 @@ func DefaultConfig(tools ...ToolFunction) Config {
 // Create a new conversation and assign unique ID
 func NewConversation(cfg Config) Conversation {
 	return Conversation{
-		ID:     uuid.Must(uuid.NewV7()).String(),
-		Config: cfg,
+		ID:       uuid.Must(uuid.NewV7()).String(),
+		Config:   cfg,
+		ToolData: map[string]json.RawMessage{},
 	}
 }
 

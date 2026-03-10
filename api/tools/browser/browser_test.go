@@ -18,7 +18,7 @@ func TestSearch(t *testing.T) {
 func TestRatelimit(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	search := Search{Browser: browser, MaxWords: MaxWords}
+	search := Search{Browser: browser}
 	for _, query := range []string{"foo", "bar"} {
 		_, resp, err := search.Call(marshal(map[string]any{"query": query}))
 		if err != nil {
@@ -31,7 +31,7 @@ func TestRatelimit(t *testing.T) {
 func TestOpenURL(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/posts/local_llm_hosting-part1/"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
@@ -40,7 +40,7 @@ func TestOpenURL(t *testing.T) {
 func TestOpenWikipedia(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://en.wikipedia.org/wiki/Liz_Truss"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
@@ -49,7 +49,7 @@ func TestOpenWikipedia(t *testing.T) {
 func TestOpenReddit(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.reddit.com/r/programming/comments/1nm2u3h/vibe_coding_is_creating_braindead_coders/"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
@@ -58,7 +58,7 @@ func TestOpenReddit(t *testing.T) {
 func TestOpenYahoo(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.yahoo.com/entertainment/"}))
 	t.Logf("response:\n%s", resp)
 	printLinks(t, browser, 10)
@@ -67,7 +67,7 @@ func TestOpenYahoo(t *testing.T) {
 func TestNotFound(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://itsabanana.dev/nonsuch/"}))
 	t.Logf("response:\n%s", resp)
 	if !strings.Contains(resp, "404: Not Found") {
@@ -78,7 +78,7 @@ func TestNotFound(t *testing.T) {
 func TestBlocked(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://www.g2.com/"}))
 	t.Logf("response:\n%s", resp)
 	if !strings.Contains(resp, "403: Forbidden") {
@@ -92,7 +92,7 @@ func TestOpenID(t *testing.T) {
 	resp := doSearch(t, browser, "local LLM hosting")
 	t.Log(resp)
 
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ = open.Call(marshal(map[string]any{"id": 3}))
 	t.Logf("response:\n%s", resp)
 	_, resp, _ = open.Call(marshal(map[string]any{"loc": 63}))
@@ -105,11 +105,11 @@ func TestFind(t *testing.T) {
 	browser := newBrowser()
 	defer browser.Close()
 
-	open := Open{Browser: browser, MaxWords: MaxWords}
+	open := Open{Browser: browser}
 	_, resp, _ := open.Call(marshal(map[string]any{"id": "https://blog.n8n.io/local-llm/"}))
 	t.Logf("open response:\n%s", resp)
 
-	find := Find{Browser: open.Browser, MaxWords: FindMaxWords}
+	find := Find{Browser: open.Browser}
 	for range 3 {
 		_, resp, _ = find.Call(marshal(map[string]any{"pattern": "video ram"}))
 		t.Logf("find response:\n%s", resp)
@@ -122,22 +122,22 @@ func newBrowser() *Browser {
 }
 
 func doSearch(t *testing.T, browser *Browser, query string) string {
-	search := Search{Browser: browser, MaxWords: MaxWords}
+	search := Search{Browser: browser}
 	_, resp, err := search.Call(marshal(map[string]any{"query": query}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(browser.Docs) != 1 {
+	if len(browser.docs) != 1 {
 		t.Fatal("no document returned")
 	}
 	return resp
 }
 
 func printLinks(t *testing.T, b *Browser, num int) {
-	if b.Cursor >= len(b.Docs) {
+	if b.cursor >= len(b.docs) {
 		t.Fatal("no doc retrieved")
 	}
-	doc := b.Docs[b.Cursor]
+	doc := b.docs[b.cursor]
 	for i, link := range doc.Links {
 		if i >= num {
 			t.Log("...")

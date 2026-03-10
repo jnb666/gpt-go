@@ -34,12 +34,18 @@ var (
 
 // Current browser state with documents retrieved in this session
 type Browser struct {
-	Docs        []markdown.Document
-	Cursor      int
-	BaseID      int
+	BaseID      int                   `json:"base_id"`
+	URLIndex    map[int]markdown.Link `json:"url_index"`
+	docs        []markdown.Document
+	cursor      int
 	scaper      scrape.Browser
 	braveApiKey string
 	nextSearch  time.Time
+}
+
+type browserState struct {
+	Tool string         `json:"tool"`
+	Data map[int]string `json:"data"`
 }
 
 // Create new browser instance
@@ -47,15 +53,16 @@ func NewBrowser(braveApiKey string, opts ...func(*scrape.Options)) *Browser {
 	return &Browser{
 		scaper:      scrape.NewBrowser(opts...),
 		braveApiKey: braveApiKey,
+		URLIndex:    map[int]markdown.Link{},
 	}
 }
 
 // Get all defined functions
 func (b *Browser) Tools() []api.ToolFunction {
 	return []api.ToolFunction{
-		&Search{Browser: b, MaxWords: MaxWords},
-		&Open{Browser: b, MaxWords: MaxWords},
-		&Find{Browser: b, MaxWords: FindMaxWords},
+		&Search{Browser: b},
+		&Open{Browser: b},
+		&Find{Browser: b},
 	}
 }
 
@@ -63,7 +70,7 @@ func (b *Browser) Tools() []api.ToolFunction {
 func (b *Browser) Reset() {
 	if b != nil {
 		b.BaseID = 0
-		b.Docs = b.Docs[:0]
+		b.docs = b.docs[:0]
 	}
 }
 
@@ -72,6 +79,14 @@ func (b *Browser) Close() {
 	if b != nil {
 		b.scaper.Shutdown()
 	}
+}
+
+func (b *Browser) Docs() []markdown.Document {
+	return b.docs
+}
+
+func (b *Browser) Cursor() int {
+	return b.cursor
 }
 
 var citationRegexp = regexp.MustCompile(`【(\d+)†(L.+?)】`)
@@ -85,29 +100,29 @@ func (s *Browser) Postprocess(content string) string {
 			return ref
 		}
 		cursor, err := strconv.Atoi(m[1])
-		if err != nil || cursor < 0 || cursor >= len(s.Docs) {
-			log.Warnf("postprocess: error parsing citation %q - invalid cursor %d - expecting 0-%d", ref, cursor, len(s.Docs)-1)
+		if err != nil || cursor < 0 || cursor >= len(s.docs) {
+			log.Warnf("postprocess: error parsing citation %q - invalid cursor %d - expecting 0-%d", ref, cursor, len(s.docs)-1)
 			return ref
 		}
-		url := s.Docs[cursor].URL
-		title := linkTitle(s.Docs[cursor].Title)
+		url := s.docs[cursor].URL
+		title := linkTitle(s.docs[cursor].Title)
 		log.Debugf("parse citation %q cursor=%d lines=%s url=%s", ref, cursor, m[2], url)
 		return fmt.Sprintf(" [%s†%s](%s %q) ", markdown.URLHost(url), m[2], url, title)
 	})
 }
 
 func (b *Browser) current() *markdown.Document {
-	if b.Cursor >= len(b.Docs) {
+	if b.cursor >= len(b.docs) {
 		return nil
 	}
-	return &b.Docs[b.Cursor]
+	return &b.docs[b.cursor]
 }
 
 func (b *Browser) get(url string) *markdown.Document {
-	for i, page := range b.Docs {
+	for i, page := range b.docs {
 		if page.URL == url {
-			b.Cursor = i
-			return &b.Docs[i]
+			b.cursor = i
+			return &b.docs[i]
 		}
 	}
 	return nil
@@ -118,8 +133,10 @@ func (b *Browser) getLink(id int) (l markdown.Link, ok bool) {
 		if doc := b.current(); doc != nil {
 			return markdown.Link{URL: doc.URL, Title: doc.Title}, true
 		}
+	} else if l, ok = b.URLIndex[id]; ok {
+		return l, true
 	} else {
-		for _, page := range b.Docs {
+		for _, page := range b.docs {
 			if id >= page.BaseID && id < page.BaseID+len(page.Links) {
 				return page.Links[id-page.BaseID], true
 			}
@@ -129,15 +146,14 @@ func (b *Browser) getLink(id int) (l markdown.Link, ok bool) {
 }
 
 func (b *Browser) add(doc markdown.Document) {
-	b.Cursor = len(b.Docs)
+	b.cursor = len(b.docs)
 	b.BaseID += len(doc.Links)
-	b.Docs = append(b.Docs, doc)
+	b.docs = append(b.docs, doc)
 }
 
 // Tool to search using Brave API - implements api.ToolFunction interface
 type Search struct {
 	*Browser
-	MaxWords int
 }
 
 func (t Search) Definition() shared.FunctionDefinitionParam {
@@ -159,9 +175,9 @@ func (t Search) Definition() shared.FunctionDefinitionParam {
 	}
 }
 
-// Perform a web search add the returned results to the Browser Docs and return markdown formatted text
+// Perform a web search add the returned results to the Browser docs and return markdown formatted text
 func (t Search) Call(arg string) (req, res string, err error) {
-	log.Infof("[%d] browser_search(%s)", len(t.Docs), arg)
+	log.Infof("[%d] browser_search(%s)", len(t.docs), arg)
 	var args struct {
 		Query string
 	}
@@ -194,6 +210,7 @@ func (t Search) Call(arg string) (req, res string, err error) {
 		log.Debug(ref)
 		doc.Write("  * " + ref + "\n" + r.Description + "\n")
 		doc.Links = append(doc.Links, link)
+		t.URLIndex[doc.BaseID+i] = link
 	}
 	t.add(doc)
 	return req, doc.Format(0), nil
@@ -248,7 +265,6 @@ func (t Search) search(query string, topn int) (resp searchResponse, err error) 
 // Tool to fetch a web URL using scrape module - implements api.ToolFunction interface
 type Open struct {
 	*Browser
-	MaxWords int
 }
 
 func (t Open) Definition() shared.FunctionDefinitionParam {
@@ -275,7 +291,7 @@ func (t Open) Definition() shared.FunctionDefinitionParam {
 
 // Gets markdown content using a playwright scape request
 func (t Open) Call(arg string) (req, res string, err error) {
-	log.Infof("[%d] browser_open(%s)", len(t.Docs), arg)
+	log.Infof("[%d] browser_open(%s)", len(t.docs), arg)
 	var args struct {
 		ID  any
 		Loc float64
@@ -312,7 +328,7 @@ func (t Open) Call(arg string) (req, res string, err error) {
 		doc.StartLine = int(args.Loc)
 	}
 	t.add(doc)
-	return req, doc.Format(t.MaxWords), nil
+	return req, doc.Format(MaxWords), nil
 }
 
 // get markdown content for url and extract links from result
@@ -327,13 +343,15 @@ func (t Open) scrape(url, title string) (doc markdown.Document, err error) {
 		title = resp.Title
 	}
 	doc = markdown.QuoteLinks(resp.Markdown, url, title, t.BaseID, WrapColumn)
+	for i, link := range doc.Links {
+		t.URLIndex[doc.BaseID+i] = link
+	}
 	return doc, err
 }
 
 // Tool to find a substring within a retrieved page - implements api.ToolFunction interface
 type Find struct {
 	*Browser
-	MaxWords int
 }
 
 func (t Find) Definition() shared.FunctionDefinitionParam {
@@ -358,7 +376,7 @@ func (t Find) Definition() shared.FunctionDefinitionParam {
 var reFind = regexp.MustCompile(`^Find results for “(.+?)” in “(.+?)”`)
 
 func (t Find) Call(arg string) (req, res string, err error) {
-	log.Infof("[%d] browser_find(%s)", len(t.Docs), arg)
+	log.Infof("[%d] browser_find(%s)", len(t.docs), arg)
 	// parse arguments
 	var args struct {
 		Pattern string
@@ -386,7 +404,7 @@ func (t Find) Call(arg string) (req, res string, err error) {
 		doc.Subtitle = fmt.Sprintf("“%s” not found", args.Pattern)
 		doc.StartLine = len(doc.Lines)
 	}
-	return req, doc.Format(t.MaxWords), nil
+	return req, doc.Format(FindMaxWords), nil
 }
 
 func errorResponse(err error) string {

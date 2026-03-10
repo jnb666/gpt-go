@@ -59,8 +59,8 @@ type Document struct {
 
 // Link extracted from document
 type Link struct {
-	Title string
-	URL   string
+	Title string `json:"title"`
+	URL   string `json:"url"`
 }
 
 // Format link with id, title and host if different from srcHost.

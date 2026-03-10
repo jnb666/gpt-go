@@ -259,7 +259,7 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	if err != nil {
 		return conv, err
 	}
-	if c.browser != nil && len(c.browser.Docs) > 0 {
+	if c.browser != nil && len(c.browser.Docs()) > 0 {
 		c.content = c.browser.Postprocess(c.content)
 	}
 	c.sendUpdate("final", c.content, -1, true)
@@ -268,6 +268,13 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Con
 	}
 	conv.Messages = append(conv.Messages, msgs...)
 	conv.NumTokens = c.numTokens
+	if c.toolCalls > 0 && c.browser != nil {
+		if data, err := json.Marshal(c.browser); err == nil {
+			conv.ToolData["browser"] = data
+		} else {
+			log.Errorf("error saving browser data:", err)
+		}
+	}
 	err = saveJSON(conv.ID, conv)
 	if err == nil && newChat {
 		err = c.listChats(conv.ID)
@@ -333,6 +340,11 @@ func (c *Connection) loadChat(id string, cfg api.Config) (conv api.Conversation,
 		conv.Config = api.DefaultConfig(c.tools...)
 		if err = loadJSON(id, &conv); err != nil {
 			return conv, err
+		}
+		if c.browser != nil && len(conv.ToolData) > 0 {
+			if err = json.Unmarshal(conv.ToolData["browser"], &c.browser); err != nil {
+				log.Errorf("Error loading browser data: %s", err)
+			}
 		}
 		for _, tool := range cfg.Tools {
 			if !slices.ContainsFunc(conv.Config.Tools, func(t api.ToolConfig) bool { return t.Name == tool.Name }) {
