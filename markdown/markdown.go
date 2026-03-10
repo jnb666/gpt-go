@@ -32,7 +32,7 @@ func Render(doc string) (string, error) {
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
-			&katex.Extender{LatexDelimiters: latexDelims, BlockOnly: true},
+			&katex.Extender{LatexDelimiters: latexDelims, MustContain: '\\'},
 			highlighting.NewHighlighting(highlighting.WithStyle("monokai")),
 		),
 		goldmark.WithRendererOptions(htmlRenderer.WithHardWraps(), htmlRenderer.WithUnsafe()),
