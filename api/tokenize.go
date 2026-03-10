@@ -12,7 +12,7 @@ import (
 // Estimate number of prompt tokens generated from the given list of messages.
 // If this exceeds the given limit then the oldest messages in the conversation are marked as excluded.
 func (c *Client) CompactMessages(conv Conversation, limit int) error {
-	if c.Server != LlamaCPP && c.Server != VLLM {
+	if c.Server != LlamaCPP && c.Server != VLLM || c.ContextLength == 0 {
 		log.Warnf("CompactMessages: skipping as not supported for %s server", c.Server)
 		return nil
 	}

@@ -38,7 +38,7 @@ func TestRequestSimple(t *testing.T) {
 	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, testMessages...)
 
-	client, err := api.NewClient(api.VLLM)
+	client, err := api.NewClient(api.VLLM, "")
 	require.NoError(t, err)
 
 	req := client.NewRequest("", conv)
@@ -70,7 +70,7 @@ func TestRequestWithTools(t *testing.T) {
 	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, testMessagesWithTools...)
 
-	client, err := api.NewClient(api.VLLM)
+	client, err := api.NewClient(api.VLLM, "")
 	require.NoError(t, err)
 
 	req := client.NewRequest("", conv, tools...)

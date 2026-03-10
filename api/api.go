@@ -86,15 +86,17 @@ type Client struct {
 	ContextLength  int
 }
 
-// Create new client with default settings if no options are given
-func NewClient(server Server, opts ...option.RequestOption) (c Client, err error) {
-	c.ReasoningField = "reasoning"
+// Create new client with default settings if no options are given.
+// If set then will use OPENAI_BASE_URL and OPENAI_API_KEY environment variables.
+// The model name is optional for LlamaCPP and LLLM - they will use the currently loaded model.
+func NewClient(server Server, modelName string, opts ...option.RequestOption) (c Client, err error) {
+	c = Client{Server: server, ReasoningField: "reasoning"}
 	switch server {
 	case LlamaCPP:
-		c.BaseURL = "http://deepthought:8080/v1"
+		c.BaseURL = "http://localhost:8080/v1"
 		c.ReasoningField = "reasoning_content"
 	case VLLM:
-		c.BaseURL = "http://deepthought:8080/v1"
+		c.BaseURL = "http://localhost:8080/v1"
 	case OpenRouter:
 		c.BaseURL = "https://openrouter.ai/api/v1"
 		c.ModelName = "@preset/gpt-oss-120"
@@ -102,10 +104,18 @@ func NewClient(server Server, opts ...option.RequestOption) (c Client, err error
 		c.BaseURL = "https://api.cerebras.ai/v1"
 		c.ModelName = "gpt-oss-120b"
 	}
-	opts = append([]option.RequestOption{option.WithBaseURL(c.BaseURL)}, opts...)
+	if modelName != "" {
+		c.ModelName = modelName
+	}
+	if url := os.Getenv("OPENAI_BASE_URL"); url != "" {
+		c.BaseURL = url
+	}
 	log.Infof("connecting to %s at %s %s", server, c.BaseURL, c.ModelName)
+	opts = append([]option.RequestOption{option.WithBaseURL(c.BaseURL)}, opts...)
 	c.Client = openai.NewClient(opts...)
-	c.ContextLength, err = MaxModelLength(server, c.BaseURL)
+	if server == LlamaCPP || server == VLLM {
+		c.ContextLength, err = MaxModelLength(server, c.BaseURL)
+	}
 	return c, err
 }
 

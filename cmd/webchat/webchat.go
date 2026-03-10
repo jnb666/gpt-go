@@ -38,7 +38,7 @@ var assets embed.FS
 var upgrader websocket.Upgrader
 
 var debug, nostream bool
-var cdpEndpoint string
+var cdpEndpoint, modelName string
 var apiServer = api.GetServer()
 
 func main() {
@@ -48,6 +48,7 @@ func main() {
 	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
 	flag.IntVar(&endpoint, "endpoint", int(apiServer), "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
+	flag.StringVar(&modelName, "model", "", "model name - optional for local server")
 	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
 	flag.StringVar(&cdpEndpoint, "cdp", "", "connect to browser at this chrome dev tools endpoint if set")
 	flag.Parse()
@@ -128,7 +129,7 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		defer conn.Close()
 
 		c := &Connection{conn: conn}
-		if c.client, err = api.NewClient(apiServer); err != nil {
+		if c.client, err = api.NewClient(apiServer, modelName); err != nil {
 			log.Fatal(err)
 		}
 		c.browser, c.python, c.tools = initTools()

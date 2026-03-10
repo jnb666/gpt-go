@@ -39,7 +39,7 @@ func tokenize(t *testing.T, msgs []api.Message, tools []api.ToolFunction, expect
 	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, msgs...)
 
-	client, err := api.NewClient(server)
+	client, err := api.NewClient(server, "")
 	require.NoError(t, err)
 	req := client.NewRequest(client.ModelName, conv, tools...)
 
@@ -56,7 +56,7 @@ func TestExcludeMessages(t *testing.T) {
 		t.Log("LLM_SERVER not set to valid server name - skipping test")
 		return
 	}
-	client, err := api.NewClient(server)
+	client, err := api.NewClient(server, "")
 	require.NoError(t, err)
 
 	var conv api.Conversation

@@ -18,12 +18,14 @@ import (
 var useWeather, useBrowser, usePython bool
 
 func main() {
+	var modelName string
 	var debug, nostream bool
 	var endpoint int
 	flag.BoolVar(&debug, "debug", false, "enable debug logging")
 	flag.BoolVar(&api.TraceRequests, "trace", false, "trace request and response messages")
 	flag.BoolVar(&nostream, "nostream", false, "don't stream responses")
 	flag.IntVar(&endpoint, "endpoint", 0, "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
+	flag.StringVar(&modelName, "model", "", "model name - optional for local server")
 	flag.BoolVar(&useWeather, "weather", false, "enable weather tool")
 	flag.BoolVar(&useBrowser, "browser", false, "enable browser tool")
 	flag.BoolVar(&usePython, "python", false, "enable python tool")
@@ -31,7 +33,7 @@ func main() {
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
-	client, err := api.NewClient(api.Server(endpoint))
+	client, err := api.NewClient(api.Server(endpoint), modelName)
 	if err != nil {
 		log.Fatal(err)
 	}
