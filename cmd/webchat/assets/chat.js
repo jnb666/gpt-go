@@ -43,19 +43,19 @@ function refreshChatList(model, list, currentID) {
 function addMessage(chat, msg, showReasoning) {
 	if (msg.reasoning && msg.reasoning.trim()) {
 		if (!msg.update) {
-			extendMessageList(chat, msg.role, true, showReasoning);
+			extendMessageList(chat, msg.role, true, showReasoning, msg.excluded);
 		}
 		addContent(chat, msg.reasoning);
 	}
 	if (msg.content && msg.content.trim()) {
 		if (!msg.update) {
-			extendMessageList(chat, msg.role, false, showReasoning);
+			extendMessageList(chat, msg.role, false, showReasoning, msg.excluded);
 		}
 		addContent(chat, msg.content);
 	}
 }
 
-function extendMessageList(chat, role, isReasoning, showReasoning) {
+function extendMessageList(chat, role, isReasoning, showReasoning, excluded) {
 	var type = "final";
 	var skip = false;
 	if (role == "user") {
@@ -75,7 +75,11 @@ function extendMessageList(chat, role, isReasoning, showReasoning) {
 		list[list.length-1].appendChild(newElement("div", "msgpart"));
 	} else {
 		// add a new message to the list
-		const entry = newElement("li", "chat-item "+type, newElement("div", "msg", newElement("div", "msgpart")));
+		var className = "msg";
+		if (excluded) {
+			className += " excluded";
+		}
+		const entry = newElement("li", "chat-item "+type, newElement("div", className, newElement("div", "msgpart")));
 		if (type == "analysis" && !showReasoning) {
 			entry.style.display = "none";
 		}
@@ -128,7 +132,7 @@ function showConfig(cfg) {
 	form.top_k.value = cfg.top_k;
 	form.presence_penalty.value = cfg.presence_penalty;
 	form.repetition_penalty.value = cfg.repetition_penalty;
-	form.disable_thinking.value = cfg.disable_thinking;
+	form.compact_threshold.value = cfg.compact_threshold;
 
 	for (const el of radio) {
 		el.checked = (el.value == cfg.reasoning_effort);
@@ -180,7 +184,7 @@ function initFormControls(app) {
 			top_k: parseInt(form.top_k.value),
 			presence_penalty: parseFloat(form.presence_penalty.value),
 			repetition_penalty: parseFloat(form.repetition_penalty.value),
-			disable_thinking: form.disable_thinking.checked,
+			compact_threshold: parseFloat(form.compact_threshold.value),
 			reasoning_effort: "medium",
 			tools: []
 		};

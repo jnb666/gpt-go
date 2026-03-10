@@ -10,36 +10,26 @@ import (
 )
 
 // Estimate number of prompt tokens generated from the given list of messages.
-// If this exceeds the maximum content length for the given model multiplied by the threshold factor
-// then the oldest messages in the conversation are marked as excluded.
-func CompactMessages(server Server, baseURL string, conv Conversation, threshold float64) error {
-	if server != LlamaCPP && server != VLLM {
-		log.Warnf("CompactMessages: skipping as not supported for %s server", server)
+// If this exceeds the given limit then the oldest messages in the conversation are marked as excluded.
+func (c *Client) CompactMessages(conv Conversation, limit int) error {
+	if c.Server != LlamaCPP && c.Server != VLLM {
+		log.Warnf("CompactMessages: skipping as not supported for %s server", c.Server)
 		return nil
 	}
-	maxTokens, err := MaxModelLength(server, baseURL)
-	if err != nil {
-		return err
-	}
-	limit := int(float64(maxTokens) * threshold)
 	// calc additional tokens in latest user message
 	n := len(conv.Messages)
 	if n == 0 {
 		log.Warn("empty conversation passed to CompactMessages - skipping")
 		return nil
 	}
-	msg, err := FromMessage(conv.Messages[n-1], false)
-	if err != nil {
-		return err
-	}
-	newTokens, err := Tokenize(server, baseURL, []openai.ChatCompletionMessageParamUnion{msg})
+	newTokens, err := Tokenize(c.Server, c.BaseURL, []openai.ChatCompletionMessageParamUnion{FromMessage(conv.Messages[n-1], "")})
 	if err != nil {
 		return err
 	}
 	tokens := conv.NumTokens + newTokens
 	end := conv.LastUserMessageNumber()
 	for {
-		if tokens < limit {
+		if tokens <= limit {
 			log.Infof("number of prompt tokens = %d / %d", tokens, limit)
 			return nil
 		}
@@ -51,7 +41,7 @@ func CompactMessages(server Server, baseURL string, conv Conversation, threshold
 				if err != nil {
 					return err
 				}
-				excudedTokens, err := Tokenize(server, baseURL, excluded)
+				excudedTokens, err := Tokenize(c.Server, c.BaseURL, excluded)
 				if err != nil {
 					return err
 				}
@@ -64,25 +54,17 @@ func CompactMessages(server Server, baseURL string, conv Conversation, threshold
 
 func excludeTurnAt(start, end int, msgs []Message) (excluded []openai.ChatCompletionMessageParamUnion, err error) {
 	msgs[start].Excluded = true
-	msg, err := FromMessage(msgs[start], false)
-	if err != nil {
-		return nil, err
-	}
-	excluded = append(excluded, msg)
+	excluded = append(excluded, FromMessage(msgs[start], ""))
 	for i := start + 1; i < end; i++ {
 		if msgs[i].Role == "user" {
 			// llama.cpp gives "Assistant response prefill is incompatible with enable_thinking." error if last message is assistant so add a dummy record
 			excluded = append(excluded, openai.UserMessage(""))
 			log.Infof("excluded %d messages from turn starting at message %d", i-start, start)
-			log.Debug(Pretty(excluded))
+			//log.Debug(Pretty(excluded))
 			return excluded, nil
 		}
 		msgs[i].Excluded = true
-		msg, err = FromMessage(msgs[i], false)
-		if err != nil {
-			return nil, err
-		}
-		excluded = append(excluded, msg)
+		excluded = append(excluded, FromMessage(msgs[i], ""))
 	}
 	return nil, fmt.Errorf("ExcludeOldMessages: exceeded limit but no more messages to exclude!")
 }

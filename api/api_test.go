@@ -38,8 +38,10 @@ func TestRequestSimple(t *testing.T) {
 	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, testMessages...)
 
-	req, err := api.NewRequest("", conv)
+	client, err := api.NewClient(api.VLLM)
 	require.NoError(t, err)
+
+	req := client.NewRequest("", conv)
 	t.Log(api.Pretty(req))
 
 	expect := map[string]any{
@@ -68,8 +70,10 @@ func TestRequestWithTools(t *testing.T) {
 	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, testMessagesWithTools...)
 
-	req, err := api.NewRequest("", conv, tools...)
+	client, err := api.NewClient(api.VLLM)
 	require.NoError(t, err)
+
+	req := client.NewRequest("", conv, tools...)
 	t.Log(api.Pretty(req))
 
 	expect := map[string]any{

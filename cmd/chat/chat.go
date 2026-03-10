@@ -9,8 +9,6 @@ import (
 	"strings"
 
 	"github.com/jnb666/gpt-go/api"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -28,11 +26,10 @@ func main() {
 	if debug {
 		log.SetLevel(log.DebugLevel)
 	}
-
-	server := api.Server(endpoint)
-	baseURL, modelName := api.DefaultModel(server)
-	log.Infof("connecting to %s at %s %s", server, baseURL, modelName)
-	client := openai.NewClient(option.WithBaseURL(baseURL))
+	client, err := api.NewClient(api.Server(endpoint))
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	cfg := api.DefaultConfig()
 	cfg.ReasoningEffort = reasoning
@@ -51,15 +48,11 @@ func main() {
 			break
 		}
 		conv.Messages = append(conv.Messages, api.Message{Role: "user", Content: strings.TrimSpace(question)})
-		req, err := api.NewRequest(modelName, conv)
-		if err != nil {
-			log.Fatal(err)
-		}
 		var msgs []api.Message
 		if nostream {
-			msgs, err = api.ChatCompletion(ctx, client, req, printOutput, logStats)
+			msgs, err = client.ChatCompletion(ctx, conv, printOutput, logStats)
 		} else {
-			msgs, err = api.ChatCompletionStream(ctx, client, req, printOutput, logStats)
+			msgs, err = client.ChatCompletionStream(ctx, conv, printOutput, logStats)
 		}
 		if err == nil {
 			log.Debug(api.Pretty(msgs))

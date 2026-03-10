@@ -192,6 +192,10 @@ a:active {
     transition: all .2s ease;
 }
 
+.excluded {
+    color: rgba(255,255,255,0.5);
+}
+
 .msg ul {
     margin-bottom: 10px;
 }

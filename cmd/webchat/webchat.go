@@ -25,8 +25,6 @@ import (
 	"github.com/jnb666/gpt-go/api/tools/weather"
 	"github.com/jnb666/gpt-go/markdown"
 	"github.com/jnb666/gpt-go/scrape"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -42,7 +40,6 @@ var upgrader websocket.Upgrader
 var debug, nostream bool
 var cdpEndpoint string
 var apiServer = api.GetServer()
-var contextThreshold = 0.80
 
 func main() {
 	var server http.Server
@@ -53,7 +50,6 @@ func main() {
 	flag.IntVar(&endpoint, "endpoint", int(apiServer), "openai server endpoint to use: 0=LlamaCPP 1=vLLM 2=OpenRouter 3=Cerebras")
 	flag.StringVar(&server.Addr, "server", ":8000", "web server address")
 	flag.StringVar(&cdpEndpoint, "cdp", "", "connect to browser at this chrome dev tools endpoint if set")
-	flag.Float64Var(&contextThreshold, "context", contextThreshold, "limit context size to this fraction of total available")
 	flag.Parse()
 
 	log.SetFormatter(&log.TextFormatter{ForceColors: true})
@@ -105,7 +101,7 @@ func main() {
 // connection state for websocket
 type Connection struct {
 	conn      *websocket.Conn
-	client    openai.Client
+	client    api.Client
 	tools     []api.ToolFunction
 	browser   *browser.Browser
 	python    *python.Python
@@ -131,11 +127,9 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		}
 		defer conn.Close()
 
-		baseURL, modelName := api.DefaultModel(apiServer)
-		log.Infof("connecting to %s at %s %s", apiServer, baseURL, modelName)
-		c := &Connection{
-			conn:   conn,
-			client: openai.NewClient(option.WithBaseURL(baseURL)),
+		c := &Connection{conn: conn}
+		if c.client, err = api.NewClient(apiServer); err != nil {
+			log.Fatal(err)
 		}
 		c.browser, c.python, c.tools = initTools()
 		defer c.browser.Close()
@@ -148,7 +142,7 @@ func websocketHandler(ctx context.Context) http.HandlerFunc {
 		}
 		log.Debugf("initial config: %#v", cfg)
 
-		err = c.handleWebsocket(ctx, cfg, baseURL, modelName)
+		err = c.handleWebsocket(ctx, cfg)
 		if err != nil {
 			log.Warn(err)
 		} else {
@@ -176,7 +170,7 @@ func readMsg(ctx context.Context, ch chan Message) (req api.Request, err error) 
 	}
 }
 
-func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, baseURL, model string) error {
+func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config) error {
 	conv := api.NewConversation(cfg)
 	ch := make(chan Message)
 	go pollWebsocket(c.conn, ch)
@@ -189,7 +183,7 @@ func (c *Connection) handleWebsocket(ctx context.Context, cfg api.Config, baseUR
 		case "list":
 			err = c.listChats(conv.ID)
 		case "add":
-			conv, err = c.addMessage(conv, req.Message, baseURL, model)
+			conv, err = c.addMessage(conv, req.Message)
 		case "load":
 			conv, err = c.loadChat(req.ID, cfg)
 		case "delete":
@@ -243,19 +237,11 @@ func (c *Connection) listChats(currentID string) error {
 }
 
 // add new message from user to chat, get streaming response, returns updated message list
-func (c *Connection) addMessage(conv api.Conversation, msg api.Message, baseURL, model string) (api.Conversation, error) {
+func (c *Connection) addMessage(conv api.Conversation, msg api.Message) (api.Conversation, error) {
 	newChat := len(conv.Messages) == 0
 	log.Infof("add message: %q", msg.Content)
 	conv.Messages = append(conv.Messages, msg)
 
-	err := api.CompactMessages(apiServer, baseURL, conv, contextThreshold)
-	if err != nil {
-		return conv, err
-	}
-	req, err := api.NewRequest(model, conv, c.tools...)
-	if err != nil {
-		return conv, err
-	}
 	c.content = ""
 	c.analysis = ""
 	c.first = true
@@ -264,10 +250,11 @@ func (c *Connection) addMessage(conv api.Conversation, msg api.Message, baseURL,
 
 	ctx := context.Background()
 	var msgs []api.Message
+	var err error
 	if nostream {
-		msgs, err = api.ChatCompletion(ctx, c.client, req, c.sendUpdate, c.updateStats, c.tools...)
+		msgs, err = c.client.ChatCompletion(ctx, conv, c.sendUpdate, c.updateStats, c.tools...)
 	} else {
-		msgs, err = api.ChatCompletionStream(ctx, c.client, req, c.sendUpdate, c.updateStats, c.tools...)
+		msgs, err = c.client.ChatCompletionStream(ctx, conv, c.sendUpdate, c.updateStats, c.tools...)
 	}
 	if err != nil {
 		return conv, err

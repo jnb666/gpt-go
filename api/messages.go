@@ -16,8 +16,6 @@ import (
 var (
 	// Used by DefaultConfig
 	DefaultSystemMessage = "You are a helpful assistant. You should answer concisely unless more detail is requested. The current date is {{today}}."
-	// Change to reasoning_content for llama.cpp - set by DefaultModel
-	ReasoningField = "reasoning"
 	// Used by NewRequest
 	ParallelToolCalls = true
 )
@@ -74,6 +72,7 @@ type Config struct {
 	TopK              int          `json:"top_k,omitzero"`
 	PresencePenalty   float64      `json:"presence_penalty,omitzero"`
 	RepetitionPenalty float64      `json:"repetition_penalty,omitzero"`
+	CompactThreshold  float64      `json:"compact_threshold,omitzero"` // if set then apply message compaction if hit this fraction of model context length
 }
 
 type ToolConfig struct {
@@ -144,6 +143,7 @@ func DefaultConfig(tools ...ToolFunction) Config {
 		TopK:              20,
 		PresencePenalty:   1.5,
 		RepetitionPenalty: 1.0,
+		CompactThreshold:  0.85,
 	}
 	for _, tool := range tools {
 		cfg.Tools = append(cfg.Tools, ToolConfig{Name: tool.Definition().Name, Enabled: true})
@@ -170,7 +170,7 @@ func (c Conversation) LastUserMessageNumber() int {
 }
 
 // Convert from openai chat completion message to our message format
-func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
+func ToMessage(m openai.ChatCompletionMessageParamUnion, reasoningField string) Message {
 	var msg Message
 	if role := m.GetRole(); role != nil {
 		msg.Role = *role
@@ -179,16 +179,12 @@ func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
 		msg.Content = *content
 	}
 	if extra := m.ExtraFields(); extra != nil {
-		if text, ok := extra[ReasoningField].(string); ok {
+		if text, ok := extra[reasoningField].(string); ok {
 			msg.Reasoning = text
 		}
 	}
 	if m.OfAssistant != nil && len(m.OfAssistant.ToolCalls) > 0 {
-		data, err := json.Marshal(m.OfAssistant.ToolCalls)
-		if err != nil {
-			panic(err)
-		}
-		msg.ToolCall = data
+		msg.ToolCall = marshal(m.OfAssistant.ToolCalls)
 	}
 	if m.OfTool != nil {
 		msg.Role = "tool"
@@ -198,29 +194,32 @@ func ToMessage(m openai.ChatCompletionMessageParamUnion) Message {
 }
 
 // Convert our message format to openai chat completion struct
-func FromMessage(m Message, includeReasoning bool) (msg openai.ChatCompletionMessageParamUnion, err error) {
+func FromMessage(m Message, reasoningField string) openai.ChatCompletionMessageParamUnion {
 	switch m.Role {
 	case "user":
-		return openai.UserMessage(m.Content), nil
+		return openai.UserMessage(m.Content)
 	case "assistant":
-		msg = openai.AssistantMessage(m.Content)
-		if includeReasoning && isSet(m.Reasoning) {
-			msg.OfAssistant.SetExtraFields(map[string]any{ReasoningField: m.Reasoning})
+		msg := openai.AssistantMessage(m.Content)
+		if reasoningField != "" && isSet(m.Reasoning) {
+			msg.OfAssistant.SetExtraFields(map[string]any{reasoningField: m.Reasoning})
 		}
 		if len(m.ToolCall) != 0 {
-			err = json.Unmarshal(m.ToolCall, &msg.OfAssistant.ToolCalls)
+			if err := json.Unmarshal(m.ToolCall, &msg.OfAssistant.ToolCalls); err != nil {
+				panic(err)
+			}
 		}
-		return msg, err
+		return msg
 	case "tool":
-		return openai.ToolMessage(m.Content, m.ToolCallID), nil
+		return openai.ToolMessage(m.Content, m.ToolCallID)
 	default:
-		return msg, fmt.Errorf("invalid message role: %s", m.Role)
+		panic("invalid message role: " + m.Role)
 	}
 }
 
 // Create a new chat completion request with given config settings. Messages with Excluded set are omitted from the request.
 // Includes reasoning content starting from the beginning of the latest turn.
-func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req openai.ChatCompletionNewParams, err error) {
+func (c *Client) NewRequest(modelName string, conv Conversation, tools ...ToolFunction) openai.ChatCompletionNewParams {
+	var req openai.ChatCompletionNewParams
 	cfg := conv.Config
 	extra := map[string]any{}
 	req.Model = shared.ChatModel(modelName)
@@ -256,14 +255,14 @@ func NewRequest(modelName string, conv Conversation, tools ...ToolFunction) (req
 	reasoningFrom := conv.LastUserMessageNumber()
 	for i, m := range conv.Messages {
 		if !m.Excluded {
-			msg, err := FromMessage(m, i >= reasoningFrom)
-			if err != nil {
-				return req, err
+			reasoning := ""
+			if i >= reasoningFrom {
+				reasoning = c.ReasoningField
 			}
-			req.Messages = append(req.Messages, msg)
+			req.Messages = append(req.Messages, FromMessage(m, reasoning))
 		}
 	}
-	return req, nil
+	return req
 }
 
 func parseSystemPrompt(s string) openai.ChatCompletionMessageParamUnion {
@@ -283,4 +282,12 @@ func Pretty(v any) string {
 		log.Error(err)
 	}
 	return string(data)
+}
+
+func marshal(v any) []byte {
+	data, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return data
 }

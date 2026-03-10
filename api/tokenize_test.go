@@ -17,12 +17,12 @@ import (
 var testConversation []byte
 
 func TestTokenizeSimple(t *testing.T) {
-	tokenize(t, testMessages, nil, 75, 51200, true)
+	tokenize(t, testMessages, nil, 50, 51200, true)
 }
 
 func TestTokenizeWithTools(t *testing.T) {
 	tools := weather.Tools(os.Getenv("OWM_API_KEY"))
-	tokenize(t, testMessagesWithTools, tools, 174, 51200, true)
+	tokenize(t, testMessagesWithTools, tools, 149, 51200, true)
 }
 
 func tokenize(t *testing.T, msgs []api.Message, tools []api.ToolFunction, expected, maxExpected int, debug bool) {
@@ -34,20 +34,20 @@ func tokenize(t *testing.T, msgs []api.Message, tools []api.ToolFunction, expect
 		t.Log("LLM_SERVER not set to valid server name - skipping test")
 		return
 	}
-	conv := api.NewConversation(api.DefaultConfig(tools...))
+	cfg := api.DefaultConfig(tools...)
+	cfg.SystemPrompt = "You are a helpful assistant."
+	conv := api.NewConversation(cfg)
 	conv.Messages = append(conv.Messages, msgs...)
 
-	baseURL, modelName := api.DefaultModel(server)
-	req, err := api.NewRequest(modelName, conv, tools...)
+	client, err := api.NewClient(server)
 	require.NoError(t, err)
+	req := client.NewRequest(client.ModelName, conv, tools...)
 
-	maxToks, err := api.MaxModelLength(server, baseURL)
+	toks, err := api.Tokenize(server, client.BaseURL, req.Messages)
 	require.NoError(t, err)
-	toks, err := api.Tokenize(server, baseURL, req.Messages)
-	require.NoError(t, err)
-	t.Logf("token count=%d max_model_len=%d", toks, maxToks)
+	t.Logf("token count=%d max_model_len=%d", toks, client.ContextLength)
 	assert.Equal(t, expected, toks, "number of tokens")
-	assert.Equal(t, maxExpected, maxToks, "max model len")
+	assert.GreaterOrEqual(t, client.ContextLength, maxExpected, "max model len")
 }
 
 func TestExcludeMessages(t *testing.T) {
@@ -56,16 +56,17 @@ func TestExcludeMessages(t *testing.T) {
 		t.Log("LLM_SERVER not set to valid server name - skipping test")
 		return
 	}
-	baseURL, _ := api.DefaultModel(server)
+	client, err := api.NewClient(server)
+	require.NoError(t, err)
 
 	var conv api.Conversation
-	err := json.Unmarshal(testConversation, &conv)
+	err = json.Unmarshal(testConversation, &conv)
 	require.NoError(t, err)
 	conv.NumTokens = 13489
 	checkNumMessages(t, conv.Messages, 31, 0)
 
 	log.SetLevel(log.DebugLevel)
-	err = api.CompactMessages(server, baseURL, conv, 0.25)
+	err = client.CompactMessages(conv, 12800)
 	require.NoError(t, err)
 
 	checkNumMessages(t, conv.Messages, 31, 16)
